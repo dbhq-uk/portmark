@@ -65,8 +65,9 @@ public static class PortmarkReader
             capability.Explanation = capability.TestInterfaceEnabled
                 ? "The port controller interface is switched on but Windows has not published it "
                 + "yet. This normally clears after the device restarts."
-                : "Windows can read your cable, but the interface that exposes it is switched off "
-                + "by default.";
+                : "Windows may be able to report more about your ports, but the interface that "
+                + "exposes it is switched off by default. Whether this PC can report cable details "
+                + "specifically is not knowable until it is switched on: many controllers cannot.";
             capability.Remedy = capability.TestInterfaceEnabled
                 ? "Restart the USB-C device, or reboot."
                 : "Run 'portmark enable' as an administrator. This is a one-time step, and "

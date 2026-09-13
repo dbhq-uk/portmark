@@ -213,6 +213,46 @@ alternate mode **is active**, but not **which**. Without the SVID there is no wa
 DisplayPort, so video capability is reported as *unknown*, not as *absent*. Those are different
 claims and conflating them is exactly the failure this project exists to avoid.
 
+## A second path that needs no setup at all
+
+The spike was framed around UCSI, and UCSI needs the registry change. That framing turned out to
+be too narrow.
+
+A USB-C adapter that supports an Alternate Mode exposes a **USB Billboard device**: USB device
+class `0x11`, whose BOS descriptor carries a Billboard capability listing every Alternate Mode it
+supports by SVID, with a two-bit state for each saying whether that mode was entered. SVID `0xFF01`
+is DisplayPort.
+
+On the test machine the dock's adapter reports exactly that:
+
+```
+Billboard device 0x343C:0x0000
+  [0] DisplayPort Alternate Mode  mode 0  -> entered successfully
+```
+
+which matches the monitor genuinely working through it.
+
+**This path is reached through documented USB hub IOCTLs** — `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX`
+and `IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION`. Verified with `TestInterfaceEnabled` cleared
+and without elevation: the video answer still comes back. No registry change, no administrator
+rights, no test interface.
+
+That reshapes the product into two tiers:
+
+| Tier | Needs | Gives |
+|---|---|---|
+| **Zero setup** | nothing | Alternate modes by SVID, and whether DisplayPort is active. Works for every user on first run. |
+| **One-time admin** | `TestInterfaceEnabled` | Port state, partner, power direction, the negotiated PD contract, the supply's full PDO list, and cable e-marker data *where the controller supports it*. |
+
+The first tier is the better first-run experience by a distance, and it is the answer to the "no
+video" half of the headline claim. It also means a machine that cannot do UCSI at all is not a
+machine that gets nothing.
+
+One implementation note worth keeping. `USB_NODE_CONNECTION_INFORMATION_EX` is byte-packed, because
+the `USB_DEVICE_DESCRIPTOR` it embeds is declared with `pshpack1`. Reading `ConnectionStatus` at the
+naturally aligned offset 32 rather than the packed offset 31 makes every port on every hub look
+disconnected, which presents as "there are no Billboard devices" rather than as an error.
+
 ## The security question, which is a product question
 
 Microsoft disables this interface by default, and says why: "to prevent it from being accessible to

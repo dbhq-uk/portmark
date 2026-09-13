@@ -177,6 +177,11 @@ internal static class Program
         Console.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
         Console.WriteLine();
 
+        // Billboard data needs no setup, so it is worth showing even when the UCSI path is not
+        // available. Printing it only on the happy path threw away the one answer this machine
+        // could give with no configuration at all.
+        PrintBillboards(report);
+
         if (report.Capability.Status != CapabilityStatus.Ok)
         {
             Console.WriteLine(Wrap(report.Capability.Explanation));
@@ -194,19 +199,6 @@ internal static class Program
                 "Note: this PC's port controller does not report cable information, so the cable "
               + "rows below will say so. Port and power details are unaffected. This is a firmware "
               + "limitation, not a property of your cables."));
-            Console.WriteLine();
-        }
-
-        foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
-        {
-            Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
-            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  {m.Name}: {m.State}");
-            Console.WriteLine(b.CarriesVideo
-                ? "  Video        yes, DisplayPort is active through this adapter"
-                : b.SupportsVideo
-                    ? "  Video        supported but not currently active"
-                    : "  Video        this adapter offers no DisplayPort mode");
             Console.WriteLine();
         }
 
@@ -262,6 +254,22 @@ internal static class Program
                 Console.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
+            Console.WriteLine();
+        }
+    }
+
+    private static void PrintBillboards(PortmarkReport report)
+    {
+        foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
+        {
+            Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
+            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
+                Console.WriteLine($"  {m.Name}: {m.State}");
+            Console.WriteLine(b.CarriesVideo
+                ? "  Video        yes, DisplayPort is active through this adapter"
+                : b.SupportsVideo
+                    ? "  Video        supported but not currently active"
+                    : "  Video        this adapter offers no DisplayPort mode");
             Console.WriteLine();
         }
     }
