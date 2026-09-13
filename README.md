@@ -1,3 +1,5 @@
+<img src="assets/icons/portmark-128.png" width="96" align="right" alt="">
+
 # Portmark
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)

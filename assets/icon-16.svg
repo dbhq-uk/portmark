@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="Portmark">
+  <!-- Tray-size variant. The stadium outline turns to mush below about 20px, so at this size
+       the tick carries the identity alone and the port is implied by a single flat bar. -->
+  <rect x="1" y="11.5" width="14" height="3" rx="1.5" fill="#2DD4BF"/>
+  <path d="M3.5 7 L6.5 10 L12.5 3" fill="none" stroke="#F8FAFC" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
