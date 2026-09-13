@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -36,9 +37,13 @@ public partial class PopoverWindow : Window
     public PopoverWindow()
     {
         InitializeComponent();
+
+        // PORTMARK_STAY keeps the panel up when focus moves elsewhere. It exists for taking
+        // documentation screenshots on a busy desktop; users get normal click-away behaviour.
+        bool stay = Environment.GetEnvironmentVariable("PORTMARK_STAY") == "1";
         Deactivated += (_, _) =>
         {
-            if (!_opening) Hide();
+            if (!_opening && !stay) Hide();
         };
     }
 
@@ -67,6 +72,7 @@ public partial class PopoverWindow : Window
         BuildLimitation(_report.Capability);
         BuildPower();
         BuildVideo();
+        BuildEmptyPorts();
         BuildDevices();
 
         int slow = _devices.Count(d => d.IsUnderperforming);
@@ -82,20 +88,76 @@ public partial class PopoverWindow : Window
         if (capability.Status == CapabilityStatus.Ok && !noCableData) return;
 
         var stack = new StackPanel();
-        stack.Children.Add(Styled(new TextBlock
-        {
-            Text = noCableData ? "Cable details unavailable" : "Setup needed",
-        }, "Value"));
 
+        if (capability.Status == CapabilityStatus.NeedsSetup)
+        {
+            // A tray app telling its user to open an administrator terminal is not a product.
+            // Sell the outcome, offer a button, and let UAC be the consent step it exists to be.
+            stack.Children.Add(Styled(new TextBlock { Text = "See charging speeds" }, "Value"));
+            stack.Children.Add(Styled(new TextBlock
+            {
+                Text = "Show how much power each port can deliver and what it is delivering now. "
+                     + "Needs one admin approval, and can be turned off again from the tray menu.",
+            }, "Caption"));
+
+            var enable = new System.Windows.Controls.Button
+            {
+                Content = "Enable",
+                Margin = new Thickness(0, 9, 0, 0),
+                Padding = new Thickness(14, 5, 14, 6),
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                FontWeight = FontWeights.SemiBold,
+            };
+            enable.SetResourceReference(StyleProperty, "Flat");
+            enable.Background = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["Accent"];
+            enable.Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["Surface"];
+            enable.Click += (_, _) =>
+            {
+                enable.IsEnabled = false;
+                enable.Content = "Waiting for approval...";
+                RunElevated("--enable", Refresh);
+            };
+            stack.Children.Add(enable);
+
+            Items.Children.Add(Card(Row("IconBolt", stack, "Accent")));
+            return;
+        }
+
+        stack.Children.Add(Styled(new TextBlock { Text = "Cable details unavailable" }, "Value"));
         stack.Children.Add(Styled(new TextBlock
         {
-            Text = noCableData
-                ? "This PC's controller does not report cable information, whichever cable you use. "
-                + "Power and video below are unaffected."
-                : capability.Remedy ?? capability.Explanation,
+            Text = "This PC's controller does not report cable information, whichever cable you "
+                 + "use. Power and video are unaffected.",
         }, "Caption"));
 
         Items.Children.Add(Card(Row("IconWarn", stack, "Warn")));
+    }
+
+    /// <summary>
+    /// Relaunches this executable elevated to flip the extended tier, then runs the follow-up on
+    /// the UI thread. Cancelling the UAC prompt is a decision, not an error, so it is silent.
+    /// </summary>
+    internal static void RunElevated(string verb, Action then)
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(Environment.ProcessPath!, verb)
+                {
+                    UseShellExecute = true,
+                    Verb = "runas",
+                };
+                using Process? p = Process.Start(psi);
+                p?.WaitForExit();
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+            {
+                // The user said no at the UAC prompt.
+            }
+
+            System.Windows.Application.Current.Dispatcher.Invoke(then);
+        });
     }
 
     private void BuildPower()
@@ -108,12 +170,21 @@ public partial class PopoverWindow : Window
             if (!p.DataAvailable || p.MaxAvailableMilliwatts is not int mw || mw <= 0) continue;
 
             var stack = new StackPanel();
+
+            // "Charging - 15W of 65W" is what a person asks; connector indices and PDO lists are
+            // what a controller answers. Translate, and keep the raw form behind the toggle.
+            string role = c.PowerDirection == "supplying" ? "Powering a device"
+                        : c.PowerDirection == "consuming" ? "Charging this PC"
+                        : "Connected";
             string headline = p.Negotiated?.NegotiatedPowerMilliwatts is int now
-                ? $"{mw / 1000.0:0.#}W available · {now / 1000.0:0.#}W drawing"
-                : $"{mw / 1000.0:0.#}W available";
+                ? $"{role} · {now / 1000.0:0.#}W of {mw / 1000.0:0.#}W"
+                : $"{role} · up to {mw / 1000.0:0.#}W";
 
             stack.Children.Add(Styled(new TextBlock { Text = headline }, "Value"));
-            stack.Children.Add(Styled(new TextBlock { Text = $"Port {c.Index}" }, "Caption"));
+            stack.Children.Add(Styled(new TextBlock
+            {
+                Text = _showDetail && c.PartnerType is { } pt ? $"Port {c.Index} · {pt}" : $"Port {c.Index}",
+            }, "Caption"));
 
             if (_showDetail)
                 foreach (PowerObjectReport pdo in p.PartnerSource.Where(x => x.Kind != "unrecognised"))
@@ -148,6 +219,26 @@ public partial class PopoverWindow : Window
         }
     }
 
+    /// <summary>
+    /// Empty is a state, not an absence. If nothing is on the USB-C ports, say so and say what
+    /// will happen, instead of leaving a gap where the answer would have been.
+    /// </summary>
+    private void BuildEmptyPorts()
+    {
+        if (_report is null) return;
+        bool anythingAttached = _report.Connectors.Any(c => c.Connected == true)
+                                || _report.Billboards.Count > 0;
+        if (anythingAttached || _report.Connectors.Count == 0) return;
+
+        var stack = new StackPanel();
+        stack.Children.Add(Styled(new TextBlock { Text = "USB-C ports are empty" }, "Value"));
+        stack.Children.Add(Styled(new TextBlock
+        {
+            Text = "Plug in a charger, dock or device and this updates by itself.",
+        }, "Caption"));
+        Items.Children.Add(Card(Row("IconPort", stack, "TextMuted")));
+    }
+
     private void BuildDevices()
     {
         if (_devices.Count == 0) return;
@@ -180,7 +271,19 @@ public partial class PopoverWindow : Window
         Items.Children.Add(Card(Row("IconChip", list, "TextMuted")));
     }
 
-    private static string Describe(UsbDeviceReport d) => d.Product ?? d.Manufacturer ?? d.DeviceClass;
+    /// <summary>
+    /// USB class names are firmware vocabulary. "Miscellaneous" and "Wireless Controller" mean
+    /// nothing to the person reading the panel, so translate the common ones and admit the rest.
+    /// </summary>
+    private static string Describe(UsbDeviceReport d) => d.Product ?? d.Manufacturer ?? d.DeviceClass switch
+    {
+        "Miscellaneous" => "Built-in device",
+        "Wireless Controller" => "Bluetooth radio",
+        "Human Interface Device" => "Input device",
+        "declared per interface" => "USB device",
+        "Billboard" => "USB-C adapter",
+        var other => other,
+    };
 
     /// <summary>An icon in a fixed gutter, then the content, so every row sits on the same grid.</summary>
     private Grid Row(string iconKey, UIElement content, string brushKey)

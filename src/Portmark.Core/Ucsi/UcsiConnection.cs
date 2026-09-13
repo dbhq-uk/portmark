@@ -226,6 +226,58 @@ public static class UcsiDevice
     public static string FlagKeyPath(string instanceId)
         => $@"HKEY_LOCAL_MACHINE\{EnumRoot}\{instanceId}\Device Parameters";
 
+    /// <summary>
+    /// Restarts the device so a TestInterfaceEnabled change takes effect. pnputil ships in
+    /// System32 on every supported Windows, and PnP republishes the interfaces within a couple of
+    /// seconds of the restart completing.
+    /// </summary>
+    public static bool RestartDevice(string instanceId, out string? error)
+    {
+        error = null;
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(
+                "pnputil.exe", $"/restart-device \"{instanceId}\"")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using System.Diagnostics.Process? p = System.Diagnostics.Process.Start(psi);
+            if (p is null) { error = "could not start pnputil"; return false; }
+            p.StandardOutput.ReadToEnd();
+            p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            Thread.Sleep(2000);
+            if (p.ExitCode != 0) error = $"pnputil exited with {p.ExitCode}";
+            return p.ExitCode == 0;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The whole extended-tier switch in one call: flag plus device restart. Requires
+    /// administrator rights, which is the caller's problem to arrange; this reports rather than
+    /// prompts.
+    /// </summary>
+    public static bool SetExtendedTier(bool enabled, out string? error)
+    {
+        IReadOnlyList<string> devices = FindDevices();
+        if (devices.Count == 0)
+        {
+            error = "no USB-C connector manager device on this PC";
+            return false;
+        }
+
+        if (!SetTestInterfaceEnabled(devices[0], enabled, out error)) return false;
+        return RestartDevice(devices[0], out error);
+    }
+
     /// <summary>Sets or clears the flag. Requires administrator rights; returns the failure reason.</summary>
     public static bool SetTestInterfaceEnabled(string instanceId, bool enabled, out string? error)
     {

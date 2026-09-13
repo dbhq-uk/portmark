@@ -1,5 +1,7 @@
 using System.Windows;
+using Microsoft.Win32;
 using Portmark.Core.Model;
+using Portmark.Core.Ucsi;
 using Portmark.Core.Usb;
 using Forms = System.Windows.Forms;
 
@@ -22,6 +24,16 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        // The elevated half of the Enable button. The popover relaunches this same executable
+        // with the runas verb and one of these flags, so the user clicks a button and answers a
+        // UAC prompt instead of being told to open an administrator terminal.
+        if (e.Args.Contains("--enable") || e.Args.Contains("--disable"))
+        {
+            bool ok = UcsiDevice.SetExtendedTier(e.Args.Contains("--enable"), out _);
+            Shutdown(ok ? 0 : 1);
+            return;
+        }
+
         _popover = new PopoverWindow();
         _tray = CreateTrayIcon();
         StartWatching();
@@ -37,7 +49,26 @@ public partial class App : System.Windows.Application
         menu.Items.Add("Open", null, (_, _) => ShowPopover());
         menu.Items.Add("Refresh", null, (_, _) => _popover?.Refresh());
         menu.Items.Add(new Forms.ToolStripSeparator());
+
+        var autostart = new Forms.ToolStripMenuItem("Start with Windows") { CheckOnClick = true };
+        autostart.Click += (_, _) => SetAutostart(autostart.Checked);
+        menu.Items.Add(autostart);
+
+        // Symmetry with the Enable button in the panel. A switch that is easy to turn on and
+        // awkward to turn off is how trust gets spent, so both directions are one click.
+        var disable = new Forms.ToolStripMenuItem("Turn off extended data");
+        disable.Click += (_, _) => PopoverWindow.RunElevated("--disable", () => _popover?.Refresh());
+        menu.Items.Add(disable);
+
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => Shutdown());
+
+        menu.Opening += (_, _) =>
+        {
+            autostart.Checked = IsAutostart();
+            disable.Visible = UcsiDevice.FindDevices() is { Count: > 0 } d
+                              && UcsiDevice.IsTestInterfaceEnabled(d[0]);
+        };
 
         var icon = new Forms.NotifyIcon
         {
@@ -133,6 +164,21 @@ public partial class App : System.Windows.Application
             : d.Speed;
 
         _tray.ShowBalloonTip(4000, $"Connected: {name}", detail, Forms.ToolTipIcon.None);
+    }
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    private static bool IsAutostart()
+    {
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKey);
+        return key?.GetValue("Portmark") is string;
+    }
+
+    private static void SetAutostart(bool enabled)
+    {
+        using RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKey);
+        if (enabled && Environment.ProcessPath is { } path) key.SetValue("Portmark", '"' + path + '"');
+        else key.DeleteValue("Portmark", throwOnMissingValue: false);
     }
 
     protected override void OnExit(ExitEventArgs e)
