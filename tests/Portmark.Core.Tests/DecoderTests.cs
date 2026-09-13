@@ -495,3 +495,61 @@ public class PowerBudgetTests
         Assert.Equal(0, r.AvailableMilliamps);
     }
 }
+
+public class UsbWatcherTests
+{
+    private static UsbDeviceReport Device(string vid, string hub = "hubA", int port = 1) => new()
+    {
+        VendorId = vid,
+        ProductId = "0x0001",
+        HubPath = hub,
+        Port = port,
+        Product = "Thing",
+    };
+
+    private static Dictionary<string, UsbDeviceReport> Set(params UsbDeviceReport[] devices)
+        => devices.ToDictionary(Portmark.Core.Usb.UsbWatcher.KeyOf);
+
+    [Fact]
+    public void ArrivalAndDepartureAreBothReported()
+    {
+        var before = Set(Device("0x1111"));
+        var after = Set(Device("0x2222"));
+
+        List<Portmark.Core.Usb.UsbChange> changes = Portmark.Core.Usb.UsbWatcher.Diff(before, after);
+
+        Assert.Equal(2, changes.Count);
+        Assert.Contains(changes, c => c.Kind == Portmark.Core.Usb.UsbChangeKind.Attached
+                                   && c.Device.VendorId == "0x2222");
+        Assert.Contains(changes, c => c.Kind == Portmark.Core.Usb.UsbChangeKind.Detached
+                                   && c.Device.VendorId == "0x1111");
+    }
+
+    [Fact]
+    public void NoChangeProducesNothing()
+    {
+        var same = Set(Device("0x1111"), Device("0x2222", port: 2));
+        Assert.Empty(Portmark.Core.Usb.UsbWatcher.Diff(same, same));
+    }
+
+    [Fact]
+    public void MovingADeviceToAnotherPortIsARealChange()
+    {
+        // Two identical dongles in two ports are two devices, and moving one between ports is
+        // something the user did and should be told about. Keying on vendor and product alone
+        // would silently swallow both cases.
+        var before = Set(Device("0x1111", port: 1));
+        var after = Set(Device("0x1111", port: 2));
+
+        List<Portmark.Core.Usb.UsbChange> changes = Portmark.Core.Usb.UsbWatcher.Diff(before, after);
+
+        Assert.Equal(2, changes.Count);
+    }
+
+    [Fact]
+    public void IdenticalDevicesOnDifferentHubsAreDistinct()
+    {
+        var both = Set(Device("0x1111", hub: "hubA"), Device("0x1111", hub: "hubB"));
+        Assert.Equal(2, both.Count);
+    }
+}

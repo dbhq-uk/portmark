@@ -50,6 +50,7 @@ internal static class Program
             "usb" => UsbDevices(),
             "tree" => UsbTree(),
             "power" => PowerBudgetReport(),
+            "watch" => Watch(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -357,6 +358,52 @@ internal static class Program
         Console.WriteLine(over > 0
             ? $"{over} hub(s) over-subscribed."
             : "No hub is over-subscribed.");
+        return ExitOk;
+    }
+
+    /// <summary>
+    /// Reports devices arriving and leaving as it happens. This is the form the information
+    /// actually wants to take: you learn a drive came up slow at the moment you plug it in,
+    /// rather than having to remember to go and ask.
+    /// </summary>
+    private static int Watch()
+    {
+        using var cancel = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
+
+        Console.WriteLine("Watching USB ports. Plug something in, or press Ctrl+C to stop.");
+        Console.WriteLine();
+
+        foreach (IReadOnlyList<Portmark.Core.Usb.UsbChange> batch in
+                 Portmark.Core.Usb.UsbWatcher.Watch(TimeSpan.FromSeconds(1), cancel.Token))
+        {
+            foreach (Portmark.Core.Usb.UsbChange change in batch)
+            {
+                Portmark.Core.Model.UsbDeviceReport d = change.Device;
+                string name = d.Product ?? d.Manufacturer ?? $"Unidentified {d.DeviceClass} device";
+                string stamp = DateTime.Now.ToString("HH:mm:ss");
+
+                if (change.Kind == Portmark.Core.Usb.UsbChangeKind.Attached)
+                {
+                    Console.WriteLine($"[{stamp}] + {name}");
+                    Console.WriteLine($"          {d.VendorId}:{d.ProductId}, {d.DeviceClass}, {d.Speed}");
+                    if (d.MaxPowerMilliamps is int ma) Console.WriteLine($"          requests up to {ma} mA");
+                    if (d.LinkDiagnosis is not null)
+                    {
+                        Console.WriteLine("          ** RUNNING SLOWER THAN IT COULD **");
+                        Console.WriteLine($"          {Wrap(d.LinkDiagnosis, 64).Replace(Environment.NewLine, Environment.NewLine + "          ")}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[{stamp}] - {name}  ({d.VendorId}:{d.ProductId})");
+                }
+
+                Console.WriteLine();
+            }
+        }
+
+        Console.WriteLine("Stopped.");
         return ExitOk;
     }
 
