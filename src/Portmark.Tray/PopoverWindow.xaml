@@ -16,7 +16,7 @@
         <Geometry x:Key="IconChip">M8,8 L16,8 L16,16 L8,16 Z M11,4 L11,8 M13,4 L13,8 M11,16 L11,20 M13,16 L13,20 M4,11 L8,11 M4,13 L8,13 M16,11 L20,11 M16,13 L20,13</Geometry>
         <Geometry x:Key="IconRefresh">M12,5 A7,7 0 1 0 19,12 M12,5 L12,1 M12,5 L16,5</Geometry>
         <Geometry x:Key="IconClose">M6,6 L18,18 M18,6 L6,18</Geometry>
-        <Geometry x:Key="IconMore">M5,12 L19,12 M12,5 L12,19</Geometry>
+        <Geometry x:Key="IconMore">M4,7 L20,7 M4,12 L20,12 M4,17 L13,17</Geometry>
     </Window.Resources>
 
     <Border Background="{StaticResource Surface}" CornerRadius="12" Margin="12"
@@ -34,7 +34,7 @@
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="DetailButton" Style="{StaticResource IconButton}"
-                            Click="OnToggleDetail" ToolTip="Show detail">
+                            Click="OnToggleDetail" ToolTip="Show technical detail">
                         <Path Data="{StaticResource IconMore}" Stroke="{StaticResource TextMuted}"
                               StrokeThickness="1.8" Width="15" Height="15" Stretch="Uniform"/>
                     </Button>
