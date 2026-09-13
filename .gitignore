@@ -2,8 +2,11 @@ bin/
 obj/
 dist/
 dist-portmark/
+dist-tray/
 *.user
 *.log
 spike-*.json
 run-*.cmd
 .claude/
+screen.png
+panel.png
