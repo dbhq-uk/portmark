@@ -41,6 +41,7 @@ internal static class Program
         {
             "doctor" => Doctor(),
             "explore" => Explore.Run(),
+            "altmodes" => AltModeSweep.Run(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -159,6 +160,20 @@ internal static class Program
         {
             Console.WriteLine($"Port {connector.Index}");
             Console.WriteLine($"  {connector.Summary}");
+
+            if (connector.Capability is { } cap)
+            {
+                var supports = new List<string>();
+                if (cap.SupportsUsb2) supports.Add("USB 2.0");
+                if (cap.SupportsUsb3) supports.Add("USB 3.x");
+                if (cap.SupportsAlternateModes) supports.Add("alternate modes");
+                if (cap.SupportsDualRolePower) supports.Add("dual role power");
+                if (cap.SupportsAudioAccessory) supports.Add("audio accessory");
+                Console.WriteLine($"  Port supports {string.Join(", ", supports)}");
+            }
+
+            if (connector.ActiveAlternateModeIndex is int cam)
+                Console.WriteLine($"  Alt mode     index {cam} active (identity unavailable on this PC)");
 
             PowerReport power = connector.Power;
             if (power.DataAvailable)

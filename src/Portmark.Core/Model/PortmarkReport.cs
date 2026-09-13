@@ -94,6 +94,18 @@ public sealed class ConnectorReport
     public string? PartnerType { get; set; }
     public string? PowerOperationMode { get; set; }
     public string? PowerDirection { get; set; }
+    /// <summary>What the connector itself supports, as distinct from what is attached to it.</summary>
+    public ConnectorCapabilityReport? Capability { get; set; }
+
+    /// <summary>
+    /// Which alternate mode index is currently active, when the controller reports one. Knowing a
+    /// mode is active is not the same as knowing which: identifying it needs GET_ALTERNATE_MODES,
+    /// which some controllers advertise but decline.
+    /// </summary>
+    public int? ActiveAlternateModeIndex { get; set; }
+    public int? SupportedAlternateModeBitmap { get; set; }
+    public string? AlternateModeNote { get; set; }
+
     public CableReport Cable { get; set; } = new();
 
     /// <summary>
@@ -135,6 +147,19 @@ public sealed class CableReport
     public bool? SupportsVideo { get; set; }
 
     public string? VideoNote { get; set; }
+}
+
+public sealed class ConnectorCapabilityReport
+{
+    public bool SupportsUsb2 { get; init; }
+    public bool SupportsUsb3 { get; init; }
+    public bool SupportsAlternateModes { get; init; }
+    public bool SupportsDualRolePower { get; init; }
+    public bool SupportsAudioAccessory { get; init; }
+    public bool SupportsDebugAccessory { get; init; }
+    public bool CanProvidePower { get; init; }
+    public bool CanConsumePower { get; init; }
+    public string Raw { get; init; } = "";
 }
 
 public sealed class PowerReport

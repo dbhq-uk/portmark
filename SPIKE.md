@@ -180,6 +180,39 @@ Stated plainly, because the difference between a trusted tool and a guessing one
    2.x. `GET_CABLE_PROPERTY` exists in 1.x, so this does not block the product, but the 2.0 field
    layouts must not be assumed on this hardware.
 
+## What this machine actually yields
+
+Cable data being unavailable does not mean nothing is. Measured on the ThinkPad T16 Gen 2:
+
+| UCSI command | Result |
+|---|---|
+| `GET_CAPABILITY` | Works. 2 connectors, PD 2.0, Type-C 1.0, BC 1.2, 3 alternate modes. |
+| `GET_CONNECTOR_CAPABILITY` | Works. USB 2.0, USB 3.x, alternate modes, dual role power, provider and consumer. |
+| `GET_CONNECTOR_STATUS` | Works. Attachment, partner type, power direction, power operation mode, and the RDO. |
+| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A — exactly the 65W charger plugged in. |
+| `GET_CAM_SUPPORTED` / `GET_CURRENT_CAM` | Work. An alternate mode is active on both connectors. |
+| `GET_ALTERNATE_MODES` | **Declined**, despite being advertised. See below. |
+| `GET_CABLE_PROPERTY` | Not advertised, returns nothing. |
+
+Two of those deserve comment.
+
+**The PDO path is the real product on hardware like this.** It answers the question most users
+actually have — how much power can this supply deliver, and how much am I drawing — and it is
+verifiable against the label on the charger. It works on a controller that cannot report cables at
+all.
+
+**`GET_ALTERNATE_MODES` is advertised but not honoured.** `bmOptionalFeatures` bit 2,
+`AlternateModeDetailsAvailable`, is set. The command was then swept across every recipient (0-3),
+offsets 0-2 and all four values of the two-bit count field, on both connectors: **96 combinations,
+zero payloads**, each completing with CCI bit 30 set and zero length. Meanwhile `GET_CAM_SUPPORTED`
+returns `0x03` and `GET_CURRENT_CAM` returns an active index on both connectors, so the modes
+plainly exist.
+
+The practical consequence is specific and worth stating precisely: portmark can tell you an
+alternate mode **is active**, but not **which**. Without the SVID there is no way to confirm
+DisplayPort, so video capability is reported as *unknown*, not as *absent*. Those are different
+claims and conflating them is exactly the failure this project exists to avoid.
+
 ## The security question, which is a product question
 
 Microsoft disables this interface by default, and says why: "to prevent it from being accessible to

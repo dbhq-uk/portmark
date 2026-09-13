@@ -157,6 +157,40 @@ public static class Capability
 }
 
 /// <summary>
+/// Decodes a UCSI GET_CONNECTOR_CAPABILITY response.
+///
+///   bits 0-7  bmOperationMode
+///             bit 0 Rp only, bit 1 Rd only, bit 2 DRP, bit 3 analog audio accessory,
+///             bit 4 debug accessory, bit 5 USB2, bit 6 USB3, bit 7 alternate mode
+///   bit    8  provider, bit 9 consumer
+///
+/// This is what the connector itself can do, as distinct from what is plugged into it.
+/// </summary>
+public static class ConnectorCapability
+{
+    public static ConnectorCapabilityReport? Decode(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 2) return null;
+
+        ushort raw = (ushort)(data[0] | (data[1] << 8));
+        byte modes = (byte)(raw & 0xFF);
+
+        return new ConnectorCapabilityReport
+        {
+            SupportsUsb2 = (modes & (1 << 5)) != 0,
+            SupportsUsb3 = (modes & (1 << 6)) != 0,
+            SupportsAlternateModes = (modes & (1 << 7)) != 0,
+            SupportsDualRolePower = (modes & (1 << 2)) != 0,
+            SupportsAudioAccessory = (modes & (1 << 3)) != 0,
+            SupportsDebugAccessory = (modes & (1 << 4)) != 0,
+            CanProvidePower = (raw & (1 << 8)) != 0,
+            CanConsumePower = (raw & (1 << 9)) != 0,
+            Raw = $"0x{raw:X4}",
+        };
+    }
+}
+
+/// <summary>
 /// Decodes a UCSI GET_CONNECTOR_STATUS response, a little-endian bit field:
 ///   bits  0-15  bmConnectorStatusChange
 ///   bits 16-18  bPowerOperationMode

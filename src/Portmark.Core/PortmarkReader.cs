@@ -114,6 +114,24 @@ public static class PortmarkReader
     {
         var report = new ConnectorReport { Index = index };
 
+        UcsiResult caps = connection.ExecuteForConnector(UcsiProtocol.CmdGetConnectorCapability, index);
+        if (caps.Ok && caps.Payload.Length >= 2)
+            report.Capability = ConnectorCapability.Decode(caps.Payload);
+
+        UcsiResult camSupported = connection.ExecuteForConnector(UcsiProtocol.CmdGetCamSupported, index);
+        if (camSupported.Ok && camSupported.Payload.Length >= 1)
+            report.SupportedAlternateModeBitmap = camSupported.Payload[0];
+
+        UcsiResult currentCam = connection.ExecuteForConnector(UcsiProtocol.CmdGetCurrentCam, index);
+        if (currentCam.Ok && currentCam.Payload.Length >= 1 && currentCam.Payload[0] != 0xFF)
+        {
+            report.ActiveAlternateModeIndex = currentCam.Payload[0];
+            report.AlternateModeNote =
+                "An alternate mode is active on this port, but this controller declines "
+              + "GET_ALTERNATE_MODES, so which mode it is cannot be determined. Video capability "
+              + "is therefore unknown rather than absent.";
+        }
+
         UcsiResult status = connection.ExecuteForConnector(UcsiProtocol.CmdGetConnectorStatus, index);
         if (status.Ok)
         {
