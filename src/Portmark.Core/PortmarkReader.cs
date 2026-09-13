@@ -13,6 +13,12 @@ public static class PortmarkReader
     public static PortmarkReport Read()
     {
         var report = new PortmarkReport { Machine = ReadMachine() };
+
+        // Billboard descriptors need no setup and no rights, so read them first and unconditionally.
+        // On hardware whose controller declines to identify alternate modes, this is the only
+        // evidence of video capability available, and it is better evidence than UCSI would give.
+        report.Billboards = Usb.BillboardReader.FindAll();
+
         UcsiConnection? connection = DetectCapability(report.Capability);
 
         if (connection is null || report.Capability.Status != CapabilityStatus.Ok)

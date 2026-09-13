@@ -17,6 +17,12 @@ public sealed class PortmarkReport
     public MachineReport Machine { get; init; } = new();
     public CapabilityReport Capability { get; init; } = new();
     public List<ConnectorReport> Connectors { get; init; } = [];
+
+    /// <summary>
+    /// USB Billboard devices found on any port. Read through public USB hub IOCTLs, so this is
+    /// populated even when the UCSI path is unavailable and even with no administrator rights.
+    /// </summary>
+    public List<BillboardReport> Billboards { get; set; } = [];
 }
 
 public sealed class MachineReport
@@ -224,4 +230,33 @@ public sealed class RawReport
     public string? ConnectorStatusCci { get; set; }
     public string? CablePropertyCci { get; set; }
     public string? PartnerSourcePdosHex { get; set; }
+}
+
+/// <summary>
+/// A USB Billboard device: a USB-C adapter declaring which Alternate Modes it supports and
+/// whether each was entered. Read over public USB hub IOCTLs, so it needs no special setup.
+/// </summary>
+public sealed class BillboardReport
+{
+    public string VendorId { get; init; } = "";
+    public string ProductId { get; init; } = "";
+    public int PreferredModeIndex { get; init; }
+    public List<AlternateModeReport> Modes { get; init; } = [];
+
+    /// <summary>True when a DisplayPort alternate mode is present and was entered successfully.</summary>
+    public bool CarriesVideo { get; set; }
+
+    /// <summary>True when DisplayPort is offered at all, whether or not it was entered.</summary>
+    public bool SupportsVideo { get; set; }
+}
+
+public sealed class AlternateModeReport
+{
+    public int Index { get; init; }
+    public string Svid { get; init; } = "";
+    public string Name { get; init; } = "";
+    public int ModeNumber { get; init; }
+    public string State { get; init; } = "";
+    public bool Entered { get; init; }
+    public bool IsDisplayPort { get; init; }
 }

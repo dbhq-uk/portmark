@@ -42,6 +42,7 @@ internal static class Program
             "doctor" => Doctor(),
             "explore" => Explore.Run(),
             "altmodes" => AltModeSweep.Run(),
+            "billboard" => Billboard(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -131,6 +132,46 @@ internal static class Program
         return ExitOk;
     }
 
+    /// <summary>
+    /// Reads USB Billboard descriptors. Unlike the UCSI path this needs no registry change and no
+    /// administrator rights, so it is worth reporting on its own.
+    /// </summary>
+    private static int Billboard()
+    {
+        Portmark.Core.Usb.BillboardReader.Tracing = Environment.GetCommandLineArgs().Contains("--verbose");
+        List<Portmark.Core.Model.BillboardReport> found = Portmark.Core.Usb.BillboardReader.FindAll();
+        if (Portmark.Core.Usb.BillboardReader.Tracing)
+        {
+            foreach (string line in Portmark.Core.Usb.BillboardReader.Trace) Console.WriteLine(line);
+            Console.WriteLine();
+        }
+
+        if (found.Count == 0)
+        {
+            Console.WriteLine("No USB Billboard devices found.");
+            Console.WriteLine(Wrap(
+                "Only USB-C adapters that support an Alternate Mode expose one, and not every "
+              + "adapter does. Nothing can be concluded about video capability from its absence."));
+            return ExitOk;
+        }
+
+        foreach (Portmark.Core.Model.BillboardReport b in found)
+        {
+            Console.WriteLine($"Billboard device {b.VendorId}:{b.ProductId}");
+            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
+                Console.WriteLine($"  [{m.Index}] {m.Name}  mode {m.ModeNumber}  -> {m.State}");
+
+            Console.WriteLine(b.CarriesVideo
+                ? "  Video: DisplayPort alternate mode entered successfully."
+                : b.SupportsVideo
+                    ? "  Video: DisplayPort is offered but was not entered."
+                    : "  Video: this adapter offers no DisplayPort alternate mode.");
+            Console.WriteLine();
+        }
+
+        return ExitOk;
+    }
+
     private static void PrintHuman(PortmarkReport report)
     {
         Console.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
@@ -153,6 +194,19 @@ internal static class Program
                 "Note: this PC's port controller does not report cable information, so the cable "
               + "rows below will say so. Port and power details are unaffected. This is a firmware "
               + "limitation, not a property of your cables."));
+            Console.WriteLine();
+        }
+
+        foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
+        {
+            Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
+            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
+                Console.WriteLine($"  {m.Name}: {m.State}");
+            Console.WriteLine(b.CarriesVideo
+                ? "  Video        yes, DisplayPort is active through this adapter"
+                : b.SupportsVideo
+                    ? "  Video        supported but not currently active"
+                    : "  Video        this adapter offers no DisplayPort mode");
             Console.WriteLine();
         }
 
