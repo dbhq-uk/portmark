@@ -143,10 +143,14 @@ Stated plainly, because the difference between a trusted tool and a guessing one
 1. **This machine cannot report cable data at all, and the reason is now known.**
 
    `GET_CABLE_PROPERTY` completes on both connectors and returns a zero-length payload. That held
-   with a 65W charger attached, and still held with a Thunderbolt dock attached — and a Thunderbolt
-   cable is always e-marked. So the first explanation, "no e-marker on this cable", was wrong.
+   with a 65W charger attached, and still held with a USB-C dock attached as well.
 
-   The answer is in `GET_CAPABILITY`. Its `bmOptionalFeatures` field reads **`0x000094`**:
+   That alone does not prove much: neither cable is guaranteed to carry an e-marker, so "no
+   e-marker" remained a live explanation on the evidence of empty responses.
+
+   The decisive evidence is elsewhere, in `GET_CAPABILITY`, and does not depend on what is plugged
+   in — the controller declares this before any cable is considered, and would declare it with the
+   ports empty. Its `bmOptionalFeatures` field reads **`0x000094`**:
 
    | Bit | Feature | This controller |
    |---|---|---|
