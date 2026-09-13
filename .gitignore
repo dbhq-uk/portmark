@@ -5,3 +5,4 @@ dist-portmark/
 *.user
 ucsiprobe-report*.json
 run-*.cmd
+disable.log

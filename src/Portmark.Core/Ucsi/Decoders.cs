@@ -149,10 +149,22 @@ public static class Capability
 
     public static int ConnectorCount(ReadOnlySpan<byte> data) => data.Length < 5 ? 0 : data[4] & 0x7F;
 
+    /// <summary>
+    /// Formats a BCD version as major.minor.subminor, dropping a zero subminor.
+    ///
+    /// The subminor nibble must not be discarded. This machine reports bcdBcVersion as 0x0102,
+    /// which is 1.0.2; truncating to major.minor silently rendered it as "1.0". The firmware very
+    /// likely means Battery Charging 1.2 and has encoded it non-standardly, but guessing that on
+    /// the device's behalf would be inventing a version it did not report.
+    /// </summary>
     private static string Bcd(byte low, byte high)
     {
         ushort value = (ushort)(low | (high << 8));
-        return $"{(value >> 8) & 0xFF:X}.{(value >> 4) & 0x0F:X}";
+        int major = (value >> 8) & 0xFF;
+        int minor = (value >> 4) & 0x0F;
+        int subminor = value & 0x0F;
+
+        return subminor == 0 ? $"{major:X}.{minor:X}" : $"{major:X}.{minor:X}.{subminor:X}";
     }
 }
 
