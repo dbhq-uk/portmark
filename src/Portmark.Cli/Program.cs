@@ -43,6 +43,7 @@ internal static class Program
             "explore" => Explore.Run(),
             "altmodes" => AltModeSweep.Run(),
             "billboard" => Billboard(),
+            "usb" => UsbDevices(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -256,6 +257,44 @@ internal static class Program
 
             Console.WriteLine();
         }
+    }
+
+    /// <summary>Lists every attached USB device, read from the devices themselves.</summary>
+    private static int UsbDevices()
+    {
+        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
+
+        if (devices.Count == 0)
+        {
+            Console.WriteLine("No USB devices found.");
+            return ExitOk;
+        }
+
+        Console.WriteLine($"{devices.Count} USB device(s) attached");
+        Console.WriteLine();
+
+        foreach (Portmark.Core.Model.UsbDeviceReport d in devices.OrderBy(x => x.IsHub ? 1 : 0))
+        {
+            // String descriptors are optional and some devices omit them, so fall back through
+            // what is actually available rather than showing a bare class name as if it were a
+            // product name.
+            string name = d.Product
+                       ?? d.Manufacturer
+                       ?? $"Unidentified {d.DeviceClass} device";
+            Console.WriteLine($"{name}{(d.IsHub ? "  [hub]" : "")}");
+            Console.WriteLine($"  ID           {d.VendorId}:{d.ProductId}");
+            if (d.Manufacturer is not null) Console.WriteLine($"  Maker        {d.Manufacturer}");
+            if (d.SerialNumber is not null) Console.WriteLine($"  Serial       {d.SerialNumber}");
+            Console.WriteLine($"  Class        {d.DeviceClass}");
+            Console.WriteLine($"  Speed        {d.Speed}");
+            Console.WriteLine($"  USB version  {d.UsbVersion}");
+            Console.WriteLine(d.MaxPowerMilliamps is int ma
+                ? $"  Requests     up to {ma} mA"
+                : "  Requests     not reported");
+            Console.WriteLine();
+        }
+
+        return ExitOk;
     }
 
     private static void PrintBillboards(PortmarkReport report)

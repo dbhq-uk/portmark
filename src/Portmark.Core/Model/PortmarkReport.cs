@@ -260,3 +260,29 @@ public sealed class AlternateModeReport
     public bool Entered { get; init; }
     public bool IsDisplayPort { get; init; }
 }
+
+/// <summary>
+/// A USB device as its own descriptors describe it, read through public hub IOCTLs. Needs no
+/// elevation and no setup, so this is available on every machine on the first run.
+/// </summary>
+public sealed class UsbDeviceReport
+{
+    public string VendorId { get; init; } = "";
+    public string ProductId { get; init; } = "";
+    public string? Manufacturer { get; init; }
+    public string? Product { get; init; }
+    public string? SerialNumber { get; init; }
+    public string DeviceClass { get; init; } = "";
+    public byte DeviceClassCode { get; init; }
+    public string Speed { get; init; } = "";
+    public byte SpeedCode { get; init; }
+    public string UsbVersion { get; init; } = "";
+
+    /// <summary>Current the device requests in its configuration descriptor, not what it draws.</summary>
+    public int? MaxPowerMilliamps { get; init; }
+
+    public bool IsHub { get; init; }
+    public int Address { get; init; }
+    public int Port { get; init; }
+    public string HubPath { get; init; } = "";
+}
