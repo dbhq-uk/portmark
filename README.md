@@ -40,6 +40,26 @@ Port 1
     - 20V at 3.25A (65W)
 ```
 
+## It tells you when you are losing speed
+
+The question behind most USB-C frustration is not "what is this cable" but "why is this slow".
+Portmark compares what each device declares it can do against the link it actually negotiated:
+
+```
+Samsung Portable SSD T7
+  Speed        High, 480 Mbps
+  USB version  3.2
+
+  ** RUNNING SLOWER THAN IT COULD **
+  Running at 480 Mbps, but this device declares USB 3.2, which allows 5 Gbps or
+  above. The usual cause is a USB 2.0 cable, or a USB 2.0 hub between this device
+  and the PC. The device and the port are probably both fine.
+```
+
+Both halves of that comparison come from the hardware — `bcdUSB` from the device's own descriptor
+and the negotiated speed from the hub — so it is a measurement, not a guess. Windows knows this and
+never tells you.
+
 ## Why you cannot just look at the connector
 
 Two USB-C cables can be physically identical and differ by a factor of twenty in power and eighty
@@ -64,7 +84,7 @@ Portmark reads from two independent sources. The first needs nothing at all.
 
 | Tier | Requires | Tells you |
 |---|---|---|
-| **Zero setup** | nothing — works on first run | Every attached USB device, read from its own descriptors. Alternate modes by SVID, and whether **DisplayPort is currently active**. |
+| **Zero setup** | nothing — works on first run | Every attached USB device, read from its own descriptors. Alternate modes by SVID, whether **DisplayPort is currently active**, and whether anything is **running slower than it could**. |
 | **Extended** | a one-time administrator step | Port state and partner, power direction, the negotiated PD contract, the supply's full voltage/current profile, and cable e-marker data *where the controller supports it*. |
 
 Most of what people want is in the first tier. You can ignore the second entirely.

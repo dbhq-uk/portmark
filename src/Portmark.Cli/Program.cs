@@ -270,7 +270,9 @@ internal static class Program
             return ExitOk;
         }
 
-        Console.WriteLine($"{devices.Count} USB device(s) attached");
+        int slow = devices.Count(d => d.IsUnderperforming);
+        Console.WriteLine($"{devices.Count} USB device(s) attached"
+                        + (slow > 0 ? $", {slow} running slower than they could" : ""));
         Console.WriteLine();
 
         foreach (Portmark.Core.Model.UsbDeviceReport d in devices.OrderBy(x => x.IsHub ? 1 : 0))
@@ -291,6 +293,14 @@ internal static class Program
             Console.WriteLine(d.MaxPowerMilliamps is int ma
                 ? $"  Requests     up to {ma} mA"
                 : "  Requests     not reported");
+
+            if (d.LinkDiagnosis is not null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ** RUNNING SLOWER THAN IT COULD **");
+                Console.WriteLine($"  {Wrap(d.LinkDiagnosis, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+            }
+
             Console.WriteLine();
         }
 

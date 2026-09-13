@@ -317,3 +317,55 @@ public class ErrorStatusTests
         Assert.Contains("unrecognised command", ErrorStatus.Describe([0x01, 0x00]));
     }
 }
+
+public class LinkDiagnosticTests
+{
+    [Fact]
+    public void SuperSpeedDeviceOnAHighSpeedLinkIsFlagged()
+    {
+        // The case people actually hit: a USB 3.x device behind a USB 2.0 cable, running at a
+        // twentieth of its capability while Windows says nothing at all.
+        Assert.True(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(
+            bcdUsb: 0x0320, actualSpeed: Portmark.Core.Usb.LinkDiagnostic.SpeedHigh, deviceClass: 0x08));
+
+        string? why = Portmark.Core.Usb.LinkDiagnostic.Explain(0x0320, 2, 0x08);
+
+        Assert.NotNull(why);
+        Assert.Contains("480 Mbps", why);
+        Assert.Contains("USB 2.0 cable", why);
+    }
+
+    [Fact]
+    public void DeviceRunningAtItsDeclaredSpeedIsNotFlagged()
+    {
+        // The camera on the test machine: declares USB 2.01, negotiated High Speed. Correct.
+        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0201, 2, 0xEF));
+        Assert.Null(Portmark.Core.Usb.LinkDiagnostic.Explain(0x0201, 2, 0xEF));
+    }
+
+    [Fact]
+    public void BillboardDeviceAtLowSpeedIsNeverFlagged()
+    {
+        // The dock's adapter on the test machine: declares USB 2.01 but attaches at Low Speed,
+        // which is what the Billboard class specifies. Flagging it would be a false alarm.
+        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0201, 0, 0x11));
+    }
+
+    [Fact]
+    public void HubsAreNotFlaggedSeparatelyFromTheCableFeedingThem()
+    {
+        // A hub running below its rating is a symptom of its upstream cable, which is reported
+        // against that cable rather than counted twice.
+        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0300, 2, 0x09));
+    }
+
+    [Theory]
+    [InlineData(0x0320, 3)]   // USB 3.2 expects SuperSpeed
+    [InlineData(0x0300, 3)]
+    [InlineData(0x0200, 2)]   // USB 2.0 expects High
+    [InlineData(0x0110, 1)]   // USB 1.1 expects Full
+    public void ExpectedSpeedFollowsTheDeclaredVersion(ushort bcdUsb, byte expected)
+    {
+        Assert.Equal(expected, Portmark.Core.Usb.LinkDiagnostic.ExpectedSpeed(bcdUsb));
+    }
+}

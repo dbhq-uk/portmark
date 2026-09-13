@@ -285,4 +285,17 @@ public sealed class UsbDeviceReport
     public int Address { get; init; }
     public int Port { get; init; }
     public string HubPath { get; init; } = "";
+
+    /// <summary>
+    /// True when the device negotiated a slower link than its own declared USB version allows.
+    /// The usual cause is a USB 2.0 cable or hub in the chain, and nothing else on the system
+    /// tells you this is happening.
+    /// </summary>
+    public bool IsUnderperforming { get; set; }
+
+    /// <summary>Plain English explanation of the shortfall, null when running at full capability.</summary>
+    public string? LinkDiagnosis { get; set; }
+
+    /// <summary>The speed the declared USB version allows, for comparison with <see cref="Speed"/>.</summary>
+    public string? ExpectedSpeed { get; set; }
 }

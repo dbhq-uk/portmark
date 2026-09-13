@@ -35,6 +35,8 @@ public static class UsbDeviceScanner
 
     private static UsbDeviceReport Describe(SafeFileHandle hub, string hubPath, UsbConnection c)
     {
+        bool slow = LinkDiagnostic.IsUnderperforming(c.UsbVersion, c.Speed, c.DeviceClass);
+
         return new UsbDeviceReport
         {
             VendorId = $"0x{c.VendorId:X4}",
@@ -52,6 +54,11 @@ public static class UsbDeviceScanner
             Address = c.Address,
             Port = (int)c.Port,
             HubPath = hubPath,
+            IsUnderperforming = slow,
+            LinkDiagnosis = LinkDiagnostic.Explain(c.UsbVersion, c.Speed, c.DeviceClass),
+            ExpectedSpeed = slow
+                ? LinkDiagnostic.SpeedLabel(LinkDiagnostic.ExpectedSpeed(c.UsbVersion))
+                : null,
         };
     }
 }
