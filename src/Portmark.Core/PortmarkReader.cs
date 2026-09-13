@@ -19,8 +19,9 @@ public static class PortmarkReader
             return report;
 
         int connectors = report.Capability.ConnectorCount ?? 0;
+        bool cableDetails = report.Capability.Features?.CableDetailsAvailable ?? true;
         for (byte index = 1; index <= connectors; index++)
-            report.Connectors.Add(ReadConnector(connection, index));
+            report.Connectors.Add(ReadConnector(connection, index, cableDetails));
 
         return report;
     }
@@ -88,14 +89,27 @@ public static class PortmarkReader
             return null;
         }
 
-        capability.ConnectorCount = caps.Payload[4] & 0x7F;
+        capability.ConnectorCount = Capability.ConnectorCount(caps.Payload);
+        capability.Features = Capability.Decode(caps.Payload);
         capability.Status = CapabilityStatus.Ok;
-        capability.Explanation =
-            $"Reading {capability.ConnectorCount} connector(s) over UCSI {capability.UcsiVersion}.";
+
+        // Say up front whether cable data is obtainable at all. A controller that does not
+        // advertise CableDetailsAvailable will never return it, on any cable, ever.
+        capability.Explanation = capability.Features?.CableDetailsAvailable == false
+            ? $"Reading {capability.ConnectorCount} connector(s) over UCSI {capability.UcsiVersion}. "
+            + "This PC's port controller does not report cable information, so port and power "
+            + "details are available but cable details are not."
+            : $"Reading {capability.ConnectorCount} connector(s) over UCSI {capability.UcsiVersion}.";
+
+        if (capability.Features?.CableDetailsAvailable == false)
+            capability.Remedy = "Nothing can be done about this in software. It is a limitation of "
+                              + "the firmware on this PC, not of the cable you have plugged in.";
+
         return connection;
     }
 
-    private static ConnectorReport ReadConnector(UcsiConnection connection, byte index)
+    private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
+                                                bool cableDetailsAvailable)
     {
         var report = new ConnectorReport { Index = index };
 
@@ -111,7 +125,16 @@ public static class PortmarkReader
             report.Connected = null;
         }
 
-        report.Cable = ReadCable(connection, index, report);
+        report.Cable = cableDetailsAvailable
+            ? ReadCable(connection, index, report)
+            : new CableReport
+            {
+                DataAvailable = false,
+                Reason = "This PC's port controller does not report cable information. It does not "
+                       + "advertise the cable details capability, so no cable can be identified "
+                       + "here regardless of which cable is plugged in.",
+                VideoNote = "Not determinable. UCSI does not report video capability.",
+            };
         report.Summary = Summarise(report);
         return report;
     }
@@ -175,7 +198,7 @@ public static class PortmarkReader
         string attached = parts.Count > 0 ? string.Join(", ", parts) : "Something attached";
 
         CableReport cable = report.Cable;
-        if (!cable.DataAvailable) return $"{attached}. Cable: not identified.";
+        if (!cable.DataAvailable) return $"{attached}. Cable: not reported by this PC.";
 
         var cableParts = new List<string>();
         if (cable.MaxWattsAt20Volts is int watts) cableParts.Add($"{watts}W");

@@ -140,22 +140,36 @@ This is genuine UCSI traffic from a non-elevated process. The spike is answered.
 
 Stated plainly, because the difference between a trusted tool and a guessing one is admitting this.
 
-1. **No populated e-marker has been decoded yet.** `GET_CABLE_PROPERTY` completes on both
-   connectors and returns a zero-length payload with the charger that was attached.
+1. **This machine cannot report cable data at all, and the reason is now known.**
 
-   This was chased down rather than assumed. The returned `CONTROL` field echoes `11 00 01`, so the
-   PPM really did execute the command for connector 1. `CCI` has Command Completed set, the Error
-   bit clear, and data length 0. A follow-up `GET_ERROR_STATUS` returns **"no error reported"** —
-   in particular *not* "unrecognised command", which UCSI requires the PPM to raise if it did not
-   implement the command.
+   `GET_CABLE_PROPERTY` completes on both connectors and returns a zero-length payload. That held
+   with a 65W charger attached, and still held with a Thunderbolt dock attached — and a Thunderbolt
+   cable is always e-marked. So the first explanation, "no e-marker on this cable", was wrong.
 
-   So the PPM implements `GET_CABLE_PROPERTY` and is reporting, correctly, that there is no
-   e-marker to describe. The tool says exactly that, rather than decoding five zero bytes into a
-   fictitious passive Type-A cable rated 0 mA.
+   The answer is in `GET_CAPABILITY`. Its `bmOptionalFeatures` field reads **`0x000094`**:
 
-   The consequence stands regardless: the `CableProperty` decoder is written from the specification
-   and is **unvalidated against real field data**. Validating it needs a cable that carries an
-   e-marker, and is the first thing to do before any UI work.
+   | Bit | Feature | This controller |
+   |---|---|---|
+   | 2 | AlternateModeDetailsAvailable | yes |
+   | 4 | PdoDetailsAvailable | yes |
+   | **5** | **CableDetailsAvailable** | **no** |
+   | 7 | PdResetNotificationSupported | yes |
+
+   The controller explicitly declares that it does not provide cable details. It is not refusing
+   the command — `CCI` shows Command Completed with the Error bit clear, `CONTROL` echoes back
+   `11 00 01`, and `GET_ERROR_STATUS` returns "no error reported" rather than "unrecognised
+   command". It answers the question honestly, and the honest answer is that it has nothing.
+
+   **No software can extract cable data on this machine.** That is a firmware limitation of the
+   ThinkPad T16 Gen 2, not a property of any cable.
+
+   Two consequences:
+
+   - The `CableProperty` decoder remains **unvalidated against real field data**, and cannot be
+     validated on this machine. It needs hardware whose controller advertises bit 5.
+   - `bmOptionalFeatures` bit 5 is the correct capability check, and is far more reliable than
+     inferring anything from an empty response. Portmark reads it before issuing the query and
+     says plainly that the PC cannot report cable information, rather than blaming the cable.
 2. **One machine.** A Lenovo ThinkPad T16 Gen 2. The crowd-sourced ~70% figure is not evidence
    about any other specific machine, and this result is not either.
 3. **`VERSION` reads `0x0100`,** i.e. UCSI 1.0 semantics, even though the OS build supports UCSI

@@ -145,6 +145,15 @@ internal static class Program
             return;
         }
 
+        if (report.Capability.Features is { CableDetailsAvailable: false })
+        {
+            Console.WriteLine(Wrap(
+                "Note: this PC's port controller does not report cable information, so the cable "
+              + "rows below will say so. Port and power details are unaffected. This is a firmware "
+              + "limitation, not a property of your cables."));
+            Console.WriteLine();
+        }
+
         foreach (ConnectorReport connector in report.Connectors)
         {
             Console.WriteLine($"Port {connector.Index}");

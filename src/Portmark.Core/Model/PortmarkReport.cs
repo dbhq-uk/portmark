@@ -61,6 +61,27 @@ public sealed class CapabilityReport
     public bool TestInterfacePublished { get; set; }
     public string? UcsiVersion { get; set; }
     public int? ConnectorCount { get; set; }
+
+    /// <summary>
+    /// What the port controller advertises in GET_CAPABILITY. Decisive for honesty: a controller
+    /// that does not advertise CableDetailsAvailable will never report cable data, and saying
+    /// "this cable has no e-marker" in that case would be a fabrication.
+    /// </summary>
+    public PpmFeatureReport? Features { get; set; }
+}
+
+public sealed class PpmFeatureReport
+{
+    public bool CableDetailsAvailable { get; init; }
+    public bool AlternateModeDetailsAvailable { get; init; }
+    public bool PowerDataObjectDetailsAvailable { get; init; }
+    public bool SupportsUsbPowerDelivery { get; init; }
+    public bool SupportsBatteryCharging { get; init; }
+    public int AlternateModeCount { get; init; }
+    public string? PowerDeliveryVersion { get; init; }
+    public string? TypeCVersion { get; init; }
+    public string? BatteryChargingVersion { get; init; }
+    public string OptionalFeaturesHex { get; init; } = "";
 }
 
 public sealed class ConnectorReport

@@ -101,6 +101,62 @@ public static class CableProperty
 }
 
 /// <summary>
+/// Decodes a UCSI GET_CAPABILITY response.
+///
+/// Layout per UCSI Table 4-13, cross-checked against the UCSI_GET_CAPABILITY_IN structure
+/// Microsoft documents:
+///   bytes 0-3  bmAttributes
+///   byte  4    bNumConnectors, low 7 bits
+///   bytes 5-7  bmOptionalFeatures, 24 bits
+///   byte  8    bNumAltModes
+///   bytes 10-11 bcdBcVersion, 12-13 bcdPdVersion, 14-15 bcdUsbTypeCVersion
+///
+/// bmOptionalFeatures bit 5 is CableDetailsAvailable. When it is clear, the controller will never
+/// return cable data, and no amount of retrying or replugging will change that.
+/// </summary>
+public static class Capability
+{
+    public const int BitSetUom = 0;
+    public const int BitSetPdm = 1;
+    public const int BitAlternateModeDetails = 2;
+    public const int BitAlternateModeOverride = 3;
+    public const int BitPdoDetails = 4;
+    public const int BitCableDetails = 5;
+    public const int BitExternalSupplyNotification = 6;
+    public const int BitPdResetNotification = 7;
+
+    public static PpmFeatureReport? Decode(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 9) return null;
+
+        uint attributes = BitConverter.ToUInt32(data[..4]);
+        uint optional = (uint)(data[5] | (data[6] << 8) | (data[7] << 16));
+
+        return new PpmFeatureReport
+        {
+            SupportsBatteryCharging = (attributes & (1u << 1)) != 0,
+            SupportsUsbPowerDelivery = (attributes & (1u << 2)) != 0,
+            AlternateModeDetailsAvailable = (optional & (1u << BitAlternateModeDetails)) != 0,
+            PowerDataObjectDetailsAvailable = (optional & (1u << BitPdoDetails)) != 0,
+            CableDetailsAvailable = (optional & (1u << BitCableDetails)) != 0,
+            AlternateModeCount = data[8],
+            BatteryChargingVersion = data.Length >= 12 ? Bcd(data[10], data[11]) : null,
+            PowerDeliveryVersion = data.Length >= 14 ? Bcd(data[12], data[13]) : null,
+            TypeCVersion = data.Length >= 16 ? Bcd(data[14], data[15]) : null,
+            OptionalFeaturesHex = $"0x{optional:X6}",
+        };
+    }
+
+    public static int ConnectorCount(ReadOnlySpan<byte> data) => data.Length < 5 ? 0 : data[4] & 0x7F;
+
+    private static string Bcd(byte low, byte high)
+    {
+        ushort value = (ushort)(low | (high << 8));
+        return $"{(value >> 8) & 0xFF:X}.{(value >> 4) & 0x0F:X}";
+    }
+}
+
+/// <summary>
 /// Decodes a UCSI GET_CONNECTOR_STATUS response, a little-endian bit field:
 ///   bits  0-15  bmConnectorStatusChange
 ///   bits 16-18  bPowerOperationMode
