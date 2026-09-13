@@ -15,7 +15,7 @@
 e-marker cable data, and connected device details. No Electron, no telemetry, single executable.
 Plus a tray app that watches your ports and tells you at the moment you plug something in.*
 
-<p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The Portmark tray panel showing video active over DisplayPort Alternate Mode, attached devices, and this PC's controller declaring cable details unavailable"></p>
+<p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The portmark tray panel showing video active over DisplayPort Alternate Mode, attached devices, and this PC's controller declaring cable details unavailable"></p>
 
 USB-C connectors are identical and their capabilities are not. One charger delivers 5W, another
 65W. One adapter carries video, another cannot. Windows negotiates all of this on every connection
