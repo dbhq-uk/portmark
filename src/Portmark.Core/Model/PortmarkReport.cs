@@ -319,3 +319,35 @@ public sealed class UsbTreeNode
     /// </summary>
     public bool AmbiguousTopology { get; set; }
 }
+
+/// <summary>
+/// What the devices on one hub have asked for, against what that hub can supply.
+///
+/// The figures are requests, not measurements: bMaxPower is what a device asks for in its
+/// configuration descriptor, and a device may request 500 mA and idle at 50. Over-subscription
+/// here is therefore a real risk rather than a measured fault, and is worded that way.
+/// </summary>
+public sealed class HubPowerReport
+{
+    public string HubPath { get; init; } = "";
+    public bool IsRootHub { get; init; }
+    public bool IsBusPowered { get; init; }
+    public int PortCount { get; init; }
+    public int DeviceCount { get; init; }
+
+    /// <summary>Current the hub's own electronics consume, from its descriptor.</summary>
+    public int HubControlCurrentMilliamps { get; init; }
+
+    /// <summary>
+    /// The shared budget, which only a bus-powered hub has. Null for a self-powered hub, which
+    /// has its own supply and a per-port guarantee rather than a pool to divide up.
+    /// </summary>
+    public int? AvailableMilliamps { get; init; }
+    public int RequestedMilliamps { get; init; }
+    public int PerPortAllowanceMilliamps { get; init; }
+
+    /// <summary>True when the attached devices have requested more than this hub promises.</summary>
+    public bool OverSubscribed { get; init; }
+
+    public string? Note { get; init; }
+}
