@@ -1,0 +1,48 @@
+name: Hardware report
+description: Tell us what your PC's USB-C controller can and cannot report.
+title: "[Hardware] "
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful thing you can contribute.
+
+        Whether a port controller reports cable details is **not documented anywhere**, and the
+        only way to find out how common it is, is to collect it. Portmark reads nothing about you
+        and sends nothing anywhere; you are pasting this yourself and can edit it first.
+
+  - type: input
+    id: machine
+    attributes:
+      label: PC make and model
+      placeholder: e.g. Dell XPS 13 9340, Framework 13 AMD, HP EliteBook 840 G11
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of `portmark --human`
+      description: Run it in a terminal and paste the whole thing. Redact anything you would rather not share.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cable-details
+    attributes:
+      label: Does your controller report cable details?
+      description: Portmark tells you this directly in its output.
+      options:
+        - "Yes, cable data is reported"
+        - "No, the controller does not advertise cable details"
+        - "Could not tell / setup step not run"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      placeholder: What was plugged in, anything that looked wrong, anything that surprised you.

@@ -3,6 +3,7 @@ obj/
 dist/
 dist-portmark/
 *.user
-ucsiprobe-report*.json
+*.log
+spike-*.json
 run-*.cmd
-disable.log
+.claude/

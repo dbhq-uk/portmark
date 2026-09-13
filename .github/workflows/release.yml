@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test before releasing
+        run: dotnet test tests/Portmark.Core.Tests/Portmark.Core.Tests.csproj -c Release
+
+      - name: Publish
+        run: dotnet publish src/Portmark.Cli/Portmark.Cli.csproj -c Release -o dist
+
+      - name: Attach executable to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/portmark.exe
+          generate_release_notes: true

@@ -1,0 +1,30 @@
+name: Bug report
+description: Something is wrong, or Portmark told you something untrue.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports that Portmark stated something **untrue** are the highest priority here. Saying
+        "unknown" is fine; saying something confident and wrong is a defect.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of `portmark` (the JSON form)
+      description: The JSON includes the raw bytes, which is usually enough to find the cause.
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: Portmark version
+      placeholder: output of `portmark --version`

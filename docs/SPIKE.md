@@ -3,7 +3,7 @@
 **Answer: B.** Cable and connector properties can be read from an ordinary, non-elevated user-mode
 process, after a one-time registry change that requires administrator rights once.
 
-Date: 2026-09-13. Tool: `src/UcsiProbe` (throwaway). Evidence: `spike-*.json` in this repo.
+Findings are reproducible with the diagnostic commands described at the end.
 
 ---
 
@@ -11,8 +11,8 @@ Date: 2026-09-13. Tool: `src/UcsiProbe` (throwaway). Evidence: `spike-*.json` in
 
 | | |
 |---|---|
-| Model | LENOVO 21K7CTO1WW — ThinkPad T16 Gen 2 |
-| BIOS | R2FET70W (1.50) |
+| Model | Lenovo ThinkPad T16 Gen 2 |
+
 | OS | Windows 11 Pro 25H2, build 10.0.26200.9445, x64 |
 | UCM device | `ACPI\USBC000\0`, "UCM-UCSI ACPI Device" |
 | Client driver | `UcmUcsiAcpiClient.sys` 10.0.26100.8972 |

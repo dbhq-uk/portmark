@@ -2,6 +2,7 @@
 
 # Portmark
 
+[![CI](https://github.com/dbhq-uk/portmark/actions/workflows/ci.yml/badge.svg)](https://github.com/dbhq-uk/portmark/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4.svg)](#install)
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
@@ -24,7 +25,6 @@ and then shows you almost none of it. Portmark reads it back out.
 
 ```
 $ portmark --human
-LENOVO 21K7CTO1WW
 
 Adapter 0x343C:0x0000
   DisplayPort Alternate Mode: entered successfully
@@ -174,7 +174,7 @@ hardware and prints the result.
 
 ## Hardware coverage
 
-Verified on a Lenovo ThinkPad T16 Gen 2 (Windows 11 25H2, build 26200). On that machine the power
+Verified on a Lenovo ThinkPad T16 Gen 2 running Windows 11 25H2. On that machine the power
 delivery decoding was checked against physical reality: the attached supply decodes to 5V/3A,
 9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W charger.
 
@@ -187,6 +187,12 @@ is not documented anywhere and the only way to find out how common it is, is to 
 When published, tag the repository with: `usb-c`, `usb-power-delivery`, `windows`, `csharp`,
 `dotnet`, `ucsi`, `thunderbolt`, `displayport`, `hardware-info`, `system-tray`, `utility`,
 `usb`, `cli`, `winui`, `e-marker`.
+
+## Contributing
+
+The most valuable contribution is a [hardware report](../../issues/new?template=hardware-report.yml):
+whether your PC's controller reports cable details is undocumented, and collecting it is the only
+way to find out how common it is. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Building
 
@@ -204,7 +210,7 @@ Portmark was written against the USB-IF UCSI specification, the USB Billboard De
 Microsoft Learn documentation, and direct observation of the Windows driver stack. The reverse
 engineering that made it possible — including recovering the in-box UCSI interface GUID and control
 codes, which differ from the ones in Microsoft's published samples — is documented in
-[SPIKE.md](SPIKE.md), along with what could not be established and why.
+[docs/SPIKE.md](docs/SPIKE.md), along with what could not be established and why.
 
 Portmark is not affiliated with, derived from, or endorsed by any other USB-C inspection tool.
 
