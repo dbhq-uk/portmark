@@ -4,7 +4,7 @@ Guidance for AI agents (and people) working in this repository.
 
 ## What this is
 
-**Portmark** reads back what Windows already knows about your USB-C ports and
+**portmark** reads back what Windows already knows about your USB-C ports and
 will not show you: the negotiated Power Delivery contract, DisplayPort Alternate
 Mode, e-marker cable data, and the attached devices. A native Windows CLI and
 tray app on .NET 10, each a single self-contained executable, no installer and
@@ -45,10 +45,10 @@ In practice:
 - If two explanations cannot be distinguished, say so rather than picking the
   likelier one
 
-A change that makes Portmark state something confident and wrong is a
+A change that makes portmark state something confident and wrong is a
 regression even if the output reads better.
 
-**2. Portmark only reads.** It sends no UCSI command that changes port state: no
+**2. portmark only reads.** It sends no UCSI command that changes port state: no
 role swaps, no resets, no power renegotiation, no firmware commands. There is no
 code path that could, and that is a promise in `SECURITY.md` rather than a
 description of the current state. Adding a write command would break the
@@ -63,7 +63,7 @@ can make that call themselves.
 
 **4. The trade-off is stated, not buried.** While the interface is enabled, any
 program running as the user can send commands to the USB-C power controller, not
-only Portmark - including commands Portmark refuses to send. Microsoft ships it
+only portmark - including commands portmark refuses to send. Microsoft ships it
 off for that reason. Every place that offers the extended tier says this, and
 says the zero-setup tier needs none of it.
 
@@ -72,7 +72,7 @@ plus CCI value for every response so a reader can redo the decoding themselves.
 Do not remove the raw bytes to tidy the output: they are what makes a decode
 checkable rather than trusted.
 
-**6. No network, no telemetry.** Portmark collects nothing and sends nothing
+**6. No network, no telemetry.** portmark collects nothing and sends nothing
 anywhere. Output stays on the machine unless the user pastes it somewhere.
 
 ## Conventions
@@ -82,6 +82,13 @@ anywhere. Output stays on the machine unless the user pastes it somewhere.
   honest answer, and it is the answer the README promises
 - House style: British English, plain hyphens, **no em dashes**, no trailing
   full stops on headings
+- **The name is lowercase: `portmark`, including at the start of a sentence.**
+  DBHQ's own product names are lowercase across the estate (dovetail, verve,
+  vela, heliograph, devskills, imager); names borrowed from another product keep
+  their owner's capitalisation. **The C# identifiers are the exception and they
+  are not a slip**: `Portmark.Core`, `Portmark.Cli`, `PortmarkReader` and
+  `Portmark.slnx` follow .NET's PascalCase convention, which is not ours to
+  override. Display name lowercase, code identifiers idiomatic
 - `.editorconfig` covers the mechanical style
 - Comments explain **why**, particularly where something is non-obvious or was
   got wrong once. Several comments here exist because a subtly wrong version

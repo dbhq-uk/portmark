@@ -17,7 +17,7 @@ In practice this means:
 - An all-zero response means the hardware had nothing to say. Do not decode it into fields.
 - If you cannot distinguish two explanations, say so rather than picking the likelier one.
 
-A pull request that makes Portmark state something confident and wrong will be rejected even if
+A pull request that makes portmark state something confident and wrong will be rejected even if
 the output looks better. Output that looks worse but is true is the product.
 
 ## Building

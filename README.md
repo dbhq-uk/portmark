@@ -1,6 +1,6 @@
 <img src="assets/icons/portmark-128.png" width="96" align="right" alt="">
 
-# Portmark
+# portmark
 
 [![CI](https://github.com/dbhq-uk/portmark/actions/workflows/ci.yml/badge.svg)](https://github.com/dbhq-uk/portmark/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
@@ -19,7 +19,7 @@ Plus a tray app that watches your ports and tells you at the moment you plug som
 
 USB-C connectors are identical and their capabilities are not. One charger delivers 5W, another
 65W. One adapter carries video, another cannot. Windows negotiates all of this on every connection
-and then shows you almost none of it. Portmark reads it back out.
+and then shows you almost none of it. portmark reads it back out.
 
 ```
 $ portmark --human
@@ -43,7 +43,7 @@ Port 1
 ## It tells you when you are losing speed
 
 The question behind most USB-C frustration is not "what is this cable" but "why is this slow".
-Portmark compares what each device declares it can do against the link it actually negotiated:
+portmark compares what each device declares it can do against the link it actually negotiated:
 
 ```
 Samsung Portable SSD T7
@@ -64,14 +64,14 @@ never tells you.
 
 Two USB-C cables can be physically identical and differ by a factor of twenty in power and eighty
 in data rate. The plug tells you nothing. Windows negotiates the real answer on every connection,
-uses it internally, and never shows you. Portmark surfaces it.
+uses it internally, and never shows you. portmark surfaces it.
 
 ## The rule this project is built on
 
 **Nothing is ever inferred from the shape of a connector.** A USB-C socket tells you the shape of
 the socket and nothing else.
 
-When a field cannot be determined, Portmark says so and says why. It will tell you "this PC's port
+When a field cannot be determined, portmark says so and says why. It will tell you "this PC's port
 controller does not report cable information" rather than "this cable has no e-marker", because
 those are different claims and only one of them is supported by the evidence. Fields that were not
 reported are `null` in the JSON, never zero, never a plausible-looking default.
@@ -80,7 +80,7 @@ This costs the tool some confident-sounding output. That is the point.
 
 ## Two tiers
 
-Portmark reads from two independent sources. The first needs nothing at all.
+portmark reads from two independent sources. The first needs nothing at all.
 
 | Tier | Requires | Tells you |
 |---|---|---|
@@ -134,42 +134,42 @@ what it does before running it.**
 
 Windows exposes port controller data through an interface that ships switched off, and Microsoft
 says why: to stop it "being accessible to unauthorized users on a retail system". While it is on,
-**any program running as you can send commands to your USB-C power controller**, not just Portmark.
+**any program running as you can send commands to your USB-C power controller**, not just portmark.
 
-Portmark itself only ever reads. It sends no command that changes port state - no role swaps, no
+portmark itself only ever reads. It sends no command that changes port state - no role swaps, no
 resets, no power renegotiation - and there is no code path that could. But enabling the interface
-does not only enable Portmark.
+does not only enable portmark.
 
 `portmark disable` turns it back off, and is worth running when you are done.
 
-## What Portmark cannot tell you
+## What portmark cannot tell you
 
 Being specific about this matters more than the feature list.
 
 - **Cable e-marker data depends entirely on your PC's controller.** Many controllers do not
   advertise `CableDetailsAvailable`, and when they do not, no software on any operating system can
-  extract cable details from them. Portmark checks that capability bit and tells you plainly rather
+  extract cable details from them. portmark checks that capability bit and tells you plainly rather
   than blaming your cable.
 - **Video is reported from Billboard descriptors, not guessed.** If an adapter exposes no Billboard
   device, video capability is reported as unknown. An adapter without one is not an adapter without
   video.
 - **UCSI carries no video field.** Any tool telling you a *cable* does or does not carry video from
   UCSI alone is guessing.
-- **Roughly a third of machines will return little or nothing.** Portmark detects this on first run
+- **Roughly a third of machines will return little or nothing.** portmark detects this on first run
   and says so, rather than showing you a blank panel or a confident wrong answer.
 
 ## Frequently asked
 
 **Does this work on Windows 10?**
 The zero-setup tier does. The extended tier needs a UCSI 2.x capable build, which means Windows 11
-22H2 September Update or later. Portmark degrades rather than failing.
+22H2 September Update or later. portmark degrades rather than failing.
 
 **Why does it say my cable is "not reported" when I know it is a 100W cable?**
 Almost certainly because your PC's port controller does not advertise `CableDetailsAvailable`. The
 cable is fine; the controller will not describe it. `portmark --human` says which case you are in.
 
 **Is it safe? It wants administrator rights.**
-Only for the optional extended tier, only once, and only to set a single registry value. Portmark
+Only for the optional extended tier, only once, and only to set a single registry value. portmark
 never sends a command that changes port state. Read [the cost of the extended tier](#the-extended-tier-and-its-cost)
 before deciding - the honest answer is that enabling it has a real trade-off.
 
@@ -183,7 +183,7 @@ Verified on a Lenovo ThinkPad T16 Gen 2 running Windows 11 25H2. On that machine
 delivery decoding was checked against physical reality: the attached supply decodes to 5V/3A,
 9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W charger.
 
-That is one machine. **If you run Portmark, please open an issue with the output of
+That is one machine. **If you run portmark, please open an issue with the output of
 `portmark --human`** - particularly whether your controller reports cable details. That capability
 is not documented anywhere and the only way to find out how common it is, is to collect it.
 
@@ -211,13 +211,13 @@ attached.
 
 ## How this was built
 
-Portmark was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
+portmark was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
 Microsoft Learn documentation, and direct observation of the Windows driver stack. The reverse
 engineering that made it possible - including recovering the in-box UCSI interface GUID and control
 codes, which differ from the ones in Microsoft's published samples - is documented in
 [docs/SPIKE.md](docs/SPIKE.md), along with what could not be established and why.
 
-Portmark is not affiliated with, derived from, or endorsed by any other USB-C inspection tool.
+portmark is not affiliated with, derived from, or endorsed by any other USB-C inspection tool.
 
 ## Licence
 

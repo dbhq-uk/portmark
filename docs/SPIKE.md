@@ -172,7 +172,7 @@ Stated plainly, because the difference between a trusted tool and a guessing one
    - The `CableProperty` decoder remains **unvalidated against real field data**, and cannot be
      validated on this machine. It needs hardware whose controller advertises bit 5.
    - `bmOptionalFeatures` bit 5 is the correct capability check, and is far more reliable than
-     inferring anything from an empty response. Portmark reads it before issuing the query and
+     inferring anything from an empty response. portmark reads it before issuing the query and
      says plainly that the PC cannot report cable information, rather than blaming the cable.
 2. **One machine.** A Lenovo ThinkPad T16 Gen 2. The crowd-sourced ~70% figure is not evidence
    about any other specific machine, and this result is not either.
