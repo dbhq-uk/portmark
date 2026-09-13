@@ -6,7 +6,7 @@
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4.svg)](#install)
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
-[![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen.svg)](#building)
+[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen.svg)](#building)
 
 **Find out what your USB-C ports, chargers and adapters can actually do - and get told
 "unknown" when your PC genuinely cannot tell you.**
@@ -15,7 +15,7 @@
 e-marker cable data, and connected device details. No Electron, no telemetry, single executable.
 Plus a tray app that watches your ports and tells you at the moment you plug something in.*
 
-<p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The portmark tray panel showing video active over DisplayPort Alternate Mode, attached devices, and this PC's controller declaring cable details unavailable"></p>
+<p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The portmark tray panel: this PC's controller declaring that cable details are unavailable, empty USB-C ports, and the four attached USB devices with the link speed each negotiated"></p>
 
 USB-C connectors are identical and their capabilities are not. One charger delivers 5W, another
 65W. One adapter carries video, another cannot. Windows negotiates all of this on every connection
