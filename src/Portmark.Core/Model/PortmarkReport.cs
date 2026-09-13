@@ -299,3 +299,23 @@ public sealed class UsbDeviceReport
     /// <summary>The speed the declared USB version allows, for comparison with <see cref="Speed"/>.</summary>
     public string? ExpectedSpeed { get; set; }
 }
+
+/// <summary>One node in the USB device tree: a hub, or a device attached to one.</summary>
+public sealed class UsbTreeNode
+{
+    /// <summary>The device this node represents. Null for a host controller's root hub.</summary>
+    public UsbDeviceReport? Device { get; set; }
+
+    public string Label { get; set; } = "";
+    public bool IsRootHub { get; set; }
+    public List<UsbTreeNode> Children { get; set; } = [];
+
+    /// <summary>Set internally once this node's ports have been merged into its device node.</summary>
+    public bool Adopted { get; set; }
+
+    /// <summary>
+    /// True when several identical hubs made it impossible to tell which interface belongs to
+    /// this one. The node is left unnested rather than attached to a guess.
+    /// </summary>
+    public bool AmbiguousTopology { get; set; }
+}

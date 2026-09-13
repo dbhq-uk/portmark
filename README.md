@@ -107,6 +107,7 @@ portmark              # JSON
 portmark                 read all ports, print JSON
 portmark --human         read all ports, print plain English
 portmark usb             list every attached USB device from its own descriptors
+portmark tree            show attached devices as the tree they physically form
 portmark billboard       report alternate modes and video capability
 portmark enable          one-time administrator setup for the extended tier
 portmark disable         undo it
