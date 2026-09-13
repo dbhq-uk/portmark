@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- NotifyIcon lives in WinForms and has no WPF equivalent. This is the standard way to put
+         a WPF application in the notification area, and costs nothing at runtime beyond the
+         WinForms assembly being loaded. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Portmark.Tray</RootNamespace>
+    <AssemblyName>Portmark</AssemblyName>
+    <ApplicationIcon>..\..\assets\icons\portmark.ico</ApplicationIcon>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Portmark.Core\Portmark.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\icons\portmark.ico" Link="portmark.ico" />
+  </ItemGroup>
+
+</Project>
