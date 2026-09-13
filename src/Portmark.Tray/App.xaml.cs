@@ -38,6 +38,11 @@ public partial class App : System.Windows.Application
         _tray = CreateTrayIcon();
         StartWatching();
 
+        // A USB-C charger is not a USB device and never enumerates on a hub, so the device
+        // watcher cannot see one arrive. The AC power source changing is the event that
+        // corresponds to plugging a charger in, and it is the only one that does.
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
         // Launching the app is an explicit request to see the ports, so show the panel rather than
         // silently adding an icon the user then has to go and find.
         _popover.ShowNearTray();
@@ -128,12 +133,59 @@ public partial class App : System.Windows.Application
                 foreach (UsbChange change in batch)
                     Dispatcher.Invoke(() => Notify(change));
 
+                // A USB device arriving says nothing about the port controller, so this refresh
+                // deliberately does not force a UCSI read. Polling the controller on every device
+                // event is what wedged it.
                 Dispatcher.Invoke(() =>
                 {
                     if (_popover?.IsVisible == true) _popover.Refresh();
                 });
             }
         }, token);
+    }
+
+    /// <summary>
+    /// Fires when the machine moves between mains and battery, which is what plugging a USB-C
+    /// charger in looks like from Windows. The port state settles a moment after the event, so
+    /// give the controller time before asking it anything.
+    /// </summary>
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.StatusChange) return;
+
+        Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ =>
+            Dispatcher.Invoke(() =>
+            {
+                if (_popover?.IsVisible == true) _popover.Refresh();
+                NotifyPowerChange();
+            }));
+    }
+
+    /// <summary>Says what the charger can do, which is the question being asked at that moment.</summary>
+    private void NotifyPowerChange()
+    {
+        if (_tray is null) return;
+
+        try
+        {
+            PortmarkReport report = Portmark.Core.PortmarkReader.Read();
+            ConnectorReport? charging = report.Connectors
+                .FirstOrDefault(c => c.Connected == true && c.PowerDirection == "consuming");
+
+            if (charging?.Power is { DataAvailable: true, MaxAvailableMilliwatts: int mw } p && mw > 0)
+            {
+                string now = p.Negotiated?.NegotiatedPowerMilliwatts is int drawn
+                    ? $"Drawing {drawn / 1000.0:0.#}W of {mw / 1000.0:0.#}W available"
+                    : $"Supply offers up to {mw / 1000.0:0.#}W";
+                _tray.ShowBalloonTip(5000, "Charger connected", now, Forms.ToolTipIcon.None);
+            }
+        }
+        catch (Exception)
+        {
+            // A power transition is a poor moment to interrogate the controller. Staying quiet is
+            // better than a balloon saying something went wrong with a cable the user just plugged
+            // in successfully.
+        }
     }
 
     private void Notify(UsbChange change)
@@ -183,6 +235,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _cancel?.Cancel();
 
         if (_tray is not null)

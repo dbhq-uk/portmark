@@ -6,10 +6,9 @@ Guidance for AI agents (and people) working in this repository.
 
 **Portmark** reads back what Windows already knows about your USB-C ports and
 will not show you: the negotiated Power Delivery contract, DisplayPort Alternate
-Mode, e-marker cable data, and the attached devices. A native Windows CLI on
-.NET 10, single self-contained executable, no installer and no runtime to
-install. A tray app is in progress and **is not shipped yet** - do not describe
-it as available.
+Mode, e-marker cable data, and the attached devices. A native Windows CLI and
+tray app on .NET 10, each a single self-contained executable, no installer and
+no runtime to install.
 
 ## Layout
 
@@ -20,6 +19,7 @@ src/Portmark.Core/Native/        # the P/Invoke layer
 src/Portmark.Core/Model/         # the JSON contract types
 src/Portmark.Core/PortmarkReader.cs
 src/Portmark.Cli/Program.cs      # commands, output, exit codes
+src/Portmark.Tray/                # the tray app: watcher, notifications, panel
 tests/Portmark.Core.Tests/       # decoder tests over captured byte vectors
 docs/SPIKE.md                    # how the interface was reached, and what was ruled out
 assets/                          # icon sources and the icon build script

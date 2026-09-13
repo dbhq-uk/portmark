@@ -21,11 +21,20 @@ jobs:
       - name: Test before releasing
         run: dotnet test Portmark.slnx -c Release
 
+      # Both executables publish as self-contained single files. The tray app's assembly is
+      # named Portmark so the process and window read well, which would collide with the CLI's
+      # portmark.exe as a release asset, so it ships under a distinct file name.
       - name: Publish
-        run: dotnet publish src/Portmark.Cli/Portmark.Cli.csproj -c Release -o dist
+        run: |
+          dotnet publish src/Portmark.Cli/Portmark.Cli.csproj -c Release -o dist-cli
+          dotnet publish src/Portmark.Tray/Portmark.Tray.csproj -c Release -o dist-tray
+          Copy-Item dist-cli/portmark.exe portmark.exe
+          Copy-Item dist-tray/Portmark.exe PortmarkTray.exe
 
       - name: Attach executable to the release
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/portmark.exe
+          files: |
+            portmark.exe
+            PortmarkTray.exe
           generate_release_notes: true

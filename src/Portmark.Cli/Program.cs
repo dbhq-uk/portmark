@@ -36,7 +36,7 @@ internal static class Program
 
         if (args.Contains("--version"))
         {
-            Console.WriteLine("portmark 0.1.0");
+            Console.WriteLine("portmark 0.2.0");
             return ExitOk;
         }
 

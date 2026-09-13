@@ -47,13 +47,26 @@ public partial class PopoverWindow : Window
         };
     }
 
-    public void Refresh()
+    private DateTime _lastUcsiRead = DateTime.MinValue;
+
+    /// <summary>
+    /// USB device enumeration is cheap and safe to repeat. Reading UCSI is neither: it talks to an
+    /// embedded controller that misbehaves when polled hard. So the device list refreshes every
+    /// time and the UCSI half is reused unless it is stale or the caller insists.
+    /// </summary>
+    public void Refresh(bool forceUcsi = false)
     {
         StatusText.Text = "Reading...";
         try
         {
-            _report = PortmarkReader.Read();
             _devices = UsbDeviceScanner.ScanAll();
+
+            bool stale = DateTime.UtcNow - _lastUcsiRead > TimeSpan.FromSeconds(10);
+            if (_report is null || stale || forceUcsi)
+            {
+                _report = PortmarkReader.Read();
+                _lastUcsiRead = DateTime.UtcNow;
+            }
         }
         catch (Exception ex)
         {
@@ -115,11 +128,13 @@ public partial class PopoverWindow : Window
             {
                 enable.IsEnabled = false;
                 enable.Content = "Waiting for approval...";
-                RunElevated("--enable", Refresh);
+                RunElevated("--enable", () => Refresh(forceUcsi: true));
             };
             stack.Children.Add(enable);
 
-            Items.Children.Add(Card(Row("IconBolt", stack, "Accent")));
+            Items.Children.Add(Card(Row("IconBolt", stack, "Accent"),
+            "The chips are every power level this supply offers. The highlighted one is the "
+          + "contract in force right now, negotiated between the supply and this PC."));
             return;
         }
 
@@ -130,7 +145,10 @@ public partial class PopoverWindow : Window
                  + "use. Power and video are unaffected.",
         }, "Caption"));
 
-        Items.Children.Add(Card(Row("IconWarn", stack, "Warn")));
+        Items.Children.Add(Card(Row("IconWarn", stack, "Warn"),
+            "Portmark asked this PC's port controller what it can report. The controller itself "
+          + "declares that cable identification is not supported in its firmware, so no cable can "
+          + "ever be described on this machine, by any software. Your cables are fine."));
     }
 
     /// <summary>
@@ -167,6 +185,21 @@ public partial class PopoverWindow : Window
         foreach (ConnectorReport c in _report.Connectors)
         {
             PowerReport p = c.Power;
+
+            // A port that is giving power out has no supplier PDOs to list, but "powering the
+            // dock" is exactly as much an answer as "charging at 15W". Skipping it made port 2
+            // vanish from the panel entirely.
+            if ((!p.DataAvailable || p.MaxAvailableMilliwatts is not > 0)
+                && c.Connected == true && c.PowerDirection == "supplying")
+            {
+                var give = new StackPanel();
+                give.Children.Add(Styled(new TextBlock { Text = "Powering a device" }, "Value"));
+                give.Children.Add(Styled(new TextBlock { Text = PortCaption(c) }, "Caption"));
+                Items.Children.Add(Card(Row("IconBolt", give, "TextMuted"),
+            "This port is delivering power to whatever is plugged into it."));
+                continue;
+            }
+
             if (!p.DataAvailable || p.MaxAvailableMilliwatts is not int mw || mw <= 0) continue;
 
             var stack = new StackPanel();
@@ -183,14 +216,26 @@ public partial class PopoverWindow : Window
             stack.Children.Add(Styled(new TextBlock { Text = headline }, "Value"));
             stack.Children.Add(Styled(new TextBlock
             {
-                Text = _showDetail && c.PartnerType is { } pt ? $"Port {c.Index} · {pt}" : $"Port {c.Index}",
+                Text = PortCaption(c),
             }, "Caption"));
 
-            if (_showDetail)
-                foreach (PowerObjectReport pdo in p.PartnerSource.Where(x => x.Kind != "unrecognised"))
-                    stack.Children.Add(Styled(new TextBlock { Text = pdo.Display }, "Caption"));
+            // The ladder is the substance: every level the supply offers, with the one in force
+            // lit. This is what the CLI shows and what the first cut of this panel hid behind a
+            // toggle, which made the panel a summary of a tool instead of the tool.
+            var ladder = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            int? activeMv = p.Negotiated?.SelectedVoltageMillivolts;
+            foreach (PowerObjectReport pdo in p.PartnerSource.Where(x => x.Kind != "unrecognised"))
+            {
+                string label = pdo.VoltageMillivolts is int mv && pdo.MaxCurrentMilliamps is int ma
+                    ? $"{mv / 1000.0:0.#}V · {ma / 1000.0:0.##}A"
+                    : pdo.Display;
+                ladder.Children.Add(Chip(label, pdo.VoltageMillivolts == activeMv && activeMv is not null));
+            }
+            if (ladder.Children.Count > 0) stack.Children.Add(ladder);
 
-            Items.Children.Add(Card(Row("IconBolt", stack, "Accent")));
+            Items.Children.Add(Card(Row("IconBolt", stack, "Accent"),
+            "The chips are every power level this supply offers. The highlighted one is the "
+          + "contract in force right now, negotiated between the supply and this PC."));
         }
     }
 
@@ -206,16 +251,17 @@ public partial class PopoverWindow : Window
                 Text = b.CarriesVideo ? "Video active" : b.SupportsVideo ? "Video idle" : "No video",
             }, "Value"));
 
-            stack.Children.Add(Styled(new TextBlock
-            {
-                Text = b.Modes.Count > 0 ? b.Modes[0].Name : "No alternate modes",
-            }, "Caption"));
+            foreach (AlternateModeReport m in b.Modes)
+                stack.Children.Add(Styled(new TextBlock
+                {
+                    Text = $"{m.Name} · {m.State}",
+                }, "Caption"));
+            if (b.Modes.Count == 0)
+                stack.Children.Add(Styled(new TextBlock { Text = "No alternate modes" }, "Caption"));
 
-            if (_showDetail)
-                foreach (AlternateModeReport m in b.Modes)
-                    stack.Children.Add(Styled(new TextBlock { Text = m.State }, "Caption"));
-
-            Items.Children.Add(Card(Row("IconDisplay", stack, b.CarriesVideo ? "Accent" : "TextMuted")));
+            Items.Children.Add(Card(Row("IconDisplay", stack, b.CarriesVideo ? "Accent" : "TextMuted"),
+            "This USB-C adapter declares which video modes it supports and whether one is running. "
+          + "Entered successfully means your display signal is flowing through this port now."));
         }
     }
 
@@ -243,38 +289,125 @@ public partial class PopoverWindow : Window
     {
         if (_devices.Count == 0) return;
 
-        foreach (UsbDeviceReport d in _devices.Where(x => x.IsUnderperforming))
-        {
-            var slow = new StackPanel();
-            slow.Children.Add(Styled(new TextBlock { Text = Describe(d) }, "Value"));
-            slow.Children.Add(Styled(new TextBlock
-            {
-                Text = _showDetail ? d.LinkDiagnosis ?? "" : $"{d.Speed} · could be faster",
-            }, "Caption"));
-            Items.Children.Add(Card(Row("IconWarn", slow, "Warn")));
-        }
-
         var list = new StackPanel();
         list.Children.Add(Styled(new TextBlock { Text = $"{_devices.Count} devices" }, "Value"));
 
-        if (_showDetail)
-        {
-            foreach (UsbDeviceReport d in _devices.OrderBy(x => x.IsHub ? 1 : 0))
-                list.Children.Add(Styled(new TextBlock { Text = $"{Describe(d)} · {d.Speed}" }, "Caption"));
-        }
-        else
-        {
-            string names = string.Join(", ", _devices.Where(x => !x.IsHub).Take(3).Select(Describe));
-            list.Children.Add(Styled(new TextBlock { Text = names }, "Caption"));
-        }
+        foreach (UsbDeviceReport d in _devices.OrderBy(x => x.IsHub ? 1 : 0))
+            list.Children.Add(DeviceRow(d));
 
-        Items.Children.Add(Card(Row("IconChip", list, "TextMuted")));
+        Items.Children.Add(Card(Row("IconChip", list, "TextMuted"),
+            "Everything attached over USB, with the link speed each device actually negotiated. "
+          + "Amber means it came up slower than the device itself says it can go, which usually "
+          + "points at a cable or hub in between."));
     }
 
     /// <summary>
     /// USB class names are firmware vocabulary. "Miscellaneous" and "Wireless Controller" mean
     /// nothing to the person reading the panel, so translate the common ones and admit the rest.
     /// </summary>
+    private static string PortCaption(ConnectorReport c)
+    {
+        var bits = new List<string> { $"Port {c.Index}" };
+        if (c.Capability is { } cap)
+        {
+            if (cap.SupportsUsb3) bits.Add("USB 3.x");
+            else if (cap.SupportsUsb2) bits.Add("USB 2.0");
+            if (cap.SupportsAlternateModes) bits.Add("alt modes");
+        }
+        if (_staticDetail && c.PartnerType is { } pt) bits.Add(pt);
+        return string.Join(" · ", bits);
+    }
+
+    // PortCaption is called from an instance context but reads the toggle through a static so it
+    // can stay a pure function of its argument.
+    private static bool _staticDetail;
+
+    /// <summary>"High, 480 Mbps" is two facts; the row only has room for the one that matters.</summary>
+    private static string ShortSpeed(string speed)
+    {
+        int comma = speed.IndexOf(',');
+        return comma >= 0 ? speed[(comma + 1)..].Trim() : speed;
+    }
+
+    /// <summary>A name on the left, its link speed on the right, and any shortfall spelt out.</summary>
+    private Grid DeviceRow(UsbDeviceReport d)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 5, 0, 0) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        TextBlock name = Styled(new TextBlock
+        {
+            Text = Describe(d),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        }, d.IsHub ? "Caption" : "Body");
+
+        TextBlock speed = Styled(new TextBlock
+        {
+            Text = ShortSpeed(d.Speed),
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        }, "Caption");
+
+        if (d.IsUnderperforming)
+            speed.Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["Warn"];
+
+        Grid.SetColumn(name, 0);
+        Grid.SetColumn(speed, 1);
+        grid.Children.Add(name);
+        grid.Children.Add(speed);
+
+        if (!d.IsUnderperforming) return grid;
+
+        // The warning belongs with the device, in amber, not in a separate card.
+        var outer = new Grid();
+        outer.ColumnDefinitions.Add(new ColumnDefinition());
+        var stack = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
+        grid.Margin = new Thickness(0);
+        stack.Children.Add(grid);
+        TextBlock why = Styled(new TextBlock
+        {
+            Text = d.ExpectedSpeed is { } could ? $"Could do {could} - check the cable or hub" : "Below its rated speed",
+        }, "Caption");
+        why.Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["Warn"];
+        stack.Children.Add(why);
+        outer.Children.Add(stack);
+        return outer;
+    }
+
+    /// <summary>A small rounded tag. The active one is filled with the accent.</summary>
+    private static Border Chip(string text, bool active)
+    {
+        var block = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal,
+        };
+
+        var chip = new Border
+        {
+            Child = block,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 3, 8, 4),
+            Margin = new Thickness(0, 0, 6, 6),
+        };
+
+        var res = System.Windows.Application.Current.Resources;
+        if (active)
+        {
+            chip.Background = (System.Windows.Media.Brush)res["Accent"];
+            block.Foreground = (System.Windows.Media.Brush)res["Surface"];
+        }
+        else
+        {
+            chip.Background = (System.Windows.Media.Brush)res["Divider"];
+            block.Foreground = (System.Windows.Media.Brush)res["TextMuted"];
+        }
+
+        return chip;
+    }
+
     private static string Describe(UsbDeviceReport d) => d.Product ?? d.Manufacturer ?? d.DeviceClass switch
     {
         "Miscellaneous" => "Built-in device",
@@ -323,10 +456,23 @@ public partial class PopoverWindow : Window
         return grid;
     }
 
-    private static Border Card(UIElement child)
+    /// <summary>
+    /// Every card takes a hover explanation. The owner of this project asked twice what two of
+    /// the cards meant, and if the owner has to ask, a stranger has no chance: the affordance
+    /// belongs on the card, not in a README.
+    /// </summary>
+    private static Border Card(UIElement child, string? explain = null)
     {
         var border = new Border { Child = child };
         border.SetResourceReference(StyleProperty, "Card");
+        if (explain is not null)
+        {
+            border.ToolTip = new System.Windows.Controls.ToolTip
+            {
+                Content = new TextBlock { Text = explain, TextWrapping = TextWrapping.Wrap, MaxWidth = 300 },
+            };
+            ToolTipService.SetInitialShowDelay(border, 350);
+        }
         return border;
     }
 
@@ -336,11 +482,13 @@ public partial class PopoverWindow : Window
         return block;
     }
 
-    private void OnRefresh(object sender, RoutedEventArgs e) => Refresh();
+    // The refresh button is an explicit request, so it bypasses the staleness check.
+    private void OnRefresh(object sender, RoutedEventArgs e) => Refresh(forceUcsi: true);
 
     private void OnToggleDetail(object sender, RoutedEventArgs e)
     {
         _showDetail = !_showDetail;
+        _staticDetail = _showDetail;
         Build();
     }
 

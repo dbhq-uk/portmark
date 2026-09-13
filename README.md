@@ -13,11 +13,9 @@
 
 *A native Windows CLI for USB-C: USB Power Delivery contracts, DisplayPort Alternate Mode,
 e-marker cable data, and connected device details. No Electron, no telemetry, single executable.
-A tray app is in progress and is not shipped yet.*
+Plus a tray app that watches your ports and tells you at the moment you plug something in.*
 
-<!-- TODO before launch: replace with a screenshot of the tray popover, and an animated GIF of a
-     cable being plugged in and the reading changing. A screenshot above the fold is the single
-     biggest driver of stars on a utility repo. -->
+<p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The Portmark tray panel showing video active over DisplayPort Alternate Mode, attached devices, and this PC's controller declaring cable details unavailable"></p>
 
 USB-C connectors are identical and their capabilities are not. One charger delivers 5W, another
 65W. One adapter carries video, another cannot. Windows negotiates all of this on every connection
@@ -93,8 +91,12 @@ Most of what people want is in the first tier. You can ignore the second entirel
 
 ## Install
 
-Download `portmark.exe` from [Releases](../../releases). It is a single self-contained executable
-with no installer and no runtime to install.
+Download from [Releases](../../releases). Both are single self-contained executables with no
+installer and no runtime to install.
+
+- `portmark.exe` - the CLI
+- `PortmarkTray.exe` - the tray app: live notifications when devices arrive, a panel on click,
+  and an optional Start with Windows toggle in its tray menu
 
 ```powershell
 portmark --human      # plain English

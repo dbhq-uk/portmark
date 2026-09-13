@@ -55,6 +55,49 @@ public sealed class UcsiConnection
     /// </summary>
     public static bool SendAcknowledgements { get; set; }
 
+    /// <summary>
+    /// The test interface has one owner at a time. Two Portmark processes talking to it at once,
+    /// a CLI run while the tray app refreshes, produced ERROR_SEM_TIMEOUT and then left the
+    /// interface unpublished entirely until the device was restarted. A machine-wide mutex makes
+    /// that impossible rather than unlikely.
+    ///
+    /// Global\ prefix so it holds across sessions: the tray app may run as one user while a CLI
+    /// runs elevated as another.
+    /// </summary>
+    private static readonly Mutex Gate = new(initiallyOwned: false, @"Global\Portmark.Ucsi");
+
+    /// <summary>How long to wait for another process to finish before giving up politely.</summary>
+    private static readonly TimeSpan GateTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The port controller is an embedded controller with one job, and hammering it has
+    /// consequences. Polling it every couple of seconds from the tray app, while a CLI ran
+    /// alongside, drove it into a state where it stopped answering UCSI entirely and the device
+    /// cycled through PnP until a reboot. Windows reports that as ERROR_SEM_TIMEOUT.
+    ///
+    /// So: a floor on how often the hardware is touched, and a circuit breaker that stops touching
+    /// it at all for a while once it times out. Reads are cheap to skip and expensive to retry.
+    /// </summary>
+    private static readonly TimeSpan MinimumInterval = TimeSpan.FromSeconds(3);
+
+    /// <summary>How long to leave the controller alone after it fails to answer.</summary>
+    private static readonly TimeSpan CooldownAfterTimeout = TimeSpan.FromSeconds(60);
+
+    private const int ErrorSemTimeout = 121;
+
+    private static DateTime _lastCall = DateTime.MinValue;
+    private static DateTime _cooldownUntil = DateTime.MinValue;
+    private static readonly object Clock = new();
+
+    /// <summary>
+    /// True when the controller recently stopped answering and is being left alone. Callers should
+    /// report this as a temporary state rather than as an absence of hardware.
+    /// </summary>
+    public static bool InCooldown
+    {
+        get { lock (Clock) return DateTime.UtcNow < _cooldownUntil; }
+    }
+
     private readonly string _interfacePath;
 
     private UcsiConnection(string interfacePath) => _interfacePath = interfacePath;
@@ -159,8 +202,53 @@ public sealed class UcsiConnection
         TryDataBlock(ack, out _, out _);
     }
 
-    /// <summary>One data-block IOCTL on a freshly opened handle.</summary>
+    /// <summary>One data-block IOCTL on a freshly opened handle, serialised across processes.</summary>
     private unsafe bool TryDataBlock(byte[] block, out byte[]? output, out string? error)
+    {
+        output = null;
+        error = null;
+
+        lock (Clock)
+        {
+            if (DateTime.UtcNow < _cooldownUntil)
+            {
+                error = "the port controller stopped responding and is being left to settle";
+                return false;
+            }
+
+            TimeSpan since = DateTime.UtcNow - _lastCall;
+            if (since < MinimumInterval) Thread.Sleep(MinimumInterval - since);
+            _lastCall = DateTime.UtcNow;
+        }
+
+        bool held = false;
+        try
+        {
+            held = Gate.WaitOne(GateTimeout);
+        }
+        catch (AbandonedMutexException)
+        {
+            // A previous holder died mid-call. The interface is ours now; carry on.
+            held = true;
+        }
+
+        if (!held)
+        {
+            error = "another program is using the port controller interface";
+            return false;
+        }
+
+        try
+        {
+            return TryDataBlockCore(block, out output, out error);
+        }
+        finally
+        {
+            Gate.ReleaseMutex();
+        }
+    }
+
+    private unsafe bool TryDataBlockCore(byte[] block, out byte[]? output, out string? error)
     {
         output = null;
         error = null;
@@ -193,6 +281,15 @@ public sealed class UcsiConnection
 
             if (!ok)
             {
+                if (err == ErrorSemTimeout)
+                {
+                    // The controller did not answer. Stop asking: continuing to poll through this
+                    // is what turns a slow response into a wedged device.
+                    lock (Clock) _cooldownUntil = DateTime.UtcNow + CooldownAfterTimeout;
+                    error = "the port controller did not respond, so it is being left to settle";
+                    return false;
+                }
+
                 error = err == ErrorInvalidDeviceState
                     ? "the PPM reported an invalid device state (it is busy or still settling)"
                     : Win32.Describe(err);
