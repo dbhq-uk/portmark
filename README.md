@@ -13,8 +13,8 @@ e-marker cable data, and connected device details. No Electron, no telemetry, si
 A tray app is in progress and is not shipped yet.*
 
 <!-- TODO before launch: replace with a screenshot of the tray popover, and an animated GIF of a
-     cable being plugged in and the reading changing. The macOS equivalent leads with a screenshot
-     and it is the single biggest driver of stars on a utility repo. -->
+     cable being plugged in and the reading changing. A screenshot above the fold is the single
+     biggest driver of stars on a utility repo. -->
 
 USB-C connectors are identical and their capabilities are not. One charger delivers 5W, another
 65W. One adapter carries video, another cannot. Windows negotiates all of this on every connection
@@ -149,10 +149,6 @@ before deciding — the honest answer is that enabling it has a real trade-off.
 **Does it phone home?**
 No. No telemetry, no network calls, no analytics. It is a single executable that reads your
 hardware and prints the result.
-
-**Is this a port of the macOS app?**
-No. Portmark is an independent Windows implementation, written against the specifications, and
-is not affiliated with any other USB-C tool.
 
 ## Hardware coverage
 
