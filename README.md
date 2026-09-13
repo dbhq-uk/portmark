@@ -8,7 +8,7 @@
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
 [![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen.svg)](#building)
 
-**Find out what your USB-C ports, chargers and adapters can actually do — and get told
+**Find out what your USB-C ports, chargers and adapters can actually do - and get told
 "unknown" when your PC genuinely cannot tell you.**
 
 *A native Windows CLI for USB-C: USB Power Delivery contracts, DisplayPort Alternate Mode,
@@ -58,8 +58,8 @@ Samsung Portable SSD T7
   and the PC. The device and the port are probably both fine.
 ```
 
-Both halves of that comparison come from the hardware — `bcdUSB` from the device's own descriptor
-and the negotiated speed from the hub — so it is a measurement, not a guess. Windows knows this and
+Both halves of that comparison come from the hardware - `bcdUSB` from the device's own descriptor
+and the negotiated speed from the hub - so it is a measurement, not a guess. Windows knows this and
 never tells you.
 
 ## Why you cannot just look at the connector
@@ -86,7 +86,7 @@ Portmark reads from two independent sources. The first needs nothing at all.
 
 | Tier | Requires | Tells you |
 |---|---|---|
-| **Zero setup** | nothing — works on first run | Every attached USB device, read from its own descriptors. Alternate modes by SVID, whether **DisplayPort is currently active**, and whether anything is **running slower than it could**. |
+| **Zero setup** | nothing - works on first run | Every attached USB device, read from its own descriptors. Alternate modes by SVID, whether **DisplayPort is currently active**, and whether anything is **running slower than it could**. |
 | **Extended** | a one-time administrator step | Port state and partner, power direction, the negotiated PD contract, the supply's full voltage/current profile, and cable e-marker data *where the controller supports it*. |
 
 Most of what people want is in the first tier. You can ignore the second entirely.
@@ -134,8 +134,8 @@ Windows exposes port controller data through an interface that ships switched of
 says why: to stop it "being accessible to unauthorized users on a retail system". While it is on,
 **any program running as you can send commands to your USB-C power controller**, not just Portmark.
 
-Portmark itself only ever reads. It sends no command that changes port state — no role swaps, no
-resets, no power renegotiation — and there is no code path that could. But enabling the interface
+Portmark itself only ever reads. It sends no command that changes port state - no role swaps, no
+resets, no power renegotiation - and there is no code path that could. But enabling the interface
 does not only enable Portmark.
 
 `portmark disable` turns it back off, and is worth running when you are done.
@@ -169,7 +169,7 @@ cable is fine; the controller will not describe it. `portmark --human` says whic
 **Is it safe? It wants administrator rights.**
 Only for the optional extended tier, only once, and only to set a single registry value. Portmark
 never sends a command that changes port state. Read [the cost of the extended tier](#the-extended-tier-and-its-cost)
-before deciding — the honest answer is that enabling it has a real trade-off.
+before deciding - the honest answer is that enabling it has a real trade-off.
 
 **Does it phone home?**
 No. No telemetry, no network calls, no analytics. It is a single executable that reads your
@@ -182,7 +182,7 @@ delivery decoding was checked against physical reality: the attached supply deco
 9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W charger.
 
 That is one machine. **If you run Portmark, please open an issue with the output of
-`portmark --human`** — particularly whether your controller reports cable details. That capability
+`portmark --human`** - particularly whether your controller reports cable details. That capability
 is not documented anywhere and the only way to find out how common it is, is to collect it.
 
 ## Repository topics
@@ -211,8 +211,8 @@ attached.
 
 Portmark was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
 Microsoft Learn documentation, and direct observation of the Windows driver stack. The reverse
-engineering that made it possible — including recovering the in-box UCSI interface GUID and control
-codes, which differ from the ones in Microsoft's published samples — is documented in
+engineering that made it possible - including recovering the in-box UCSI interface GUID and control
+codes, which differ from the ones in Microsoft's published samples - is documented in
 [docs/SPIKE.md](docs/SPIKE.md), along with what could not be established and why.
 
 Portmark is not affiliated with, derived from, or endorsed by any other USB-C inspection tool.

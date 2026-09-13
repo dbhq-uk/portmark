@@ -24,12 +24,12 @@ This is a stock consumer laptop. No WDK, no test-signed drivers, no MUTT package
 
 ## Verdict in the brief's terms
 
-- **A — user mode, no admin, no registry change.** Ruled out. Evidence below.
-- **B — user mode, after a one-time elevated `TestInterfaceEnabled` change.** **This is the answer.**
+- **A - user mode, no admin, no registry change.** Ruled out. Evidence below.
+- **B - user mode, after a one-time elevated `TestInterfaceEnabled` change.** **This is the answer.**
   Once the flag is set, a normal unelevated process opens the interface and executes UCSI commands.
-- **C — only via `UcsiControl.exe`.** Not required. `UcsiControl.exe` is not installed on this
+- **C - only via `UcsiControl.exe`.** Not required. `UcsiControl.exe` is not installed on this
   machine and was never used.
-- **D — not readable.** Ruled out.
+- **D - not readable.** Ruled out.
 
 ---
 
@@ -62,7 +62,7 @@ wrong.**
 The sample GUID really is sample-only. A byte scan of all **473** driver binaries in
 `System32\drivers` found `6c846eea-9649-46b3` in **none** of them, and it is not registered as a
 device interface class. So anyone testing only that GUID would correctly conclude it does not
-exist — and would incorrectly conclude the test interface is unreachable.
+exist - and would incorrectly conclude the test interface is unreachable.
 
 The shipping driver has its **own** test interface. It was found like this, without reading any
 third-party source:
@@ -79,7 +79,7 @@ third-party source:
 
 The control codes differ too. Scanning for constants with device type 4627 (`FILE_DEVICE_UCSI`)
 found precisely two in `UcmUcsiCx.sys`, and none at all in `UcmUcsiAcpiClient.sys`, `UcmCx.sys` or
-`UsbPmApi.sys` — so they are codes the class extension *receives*, not ones it sends downstream.
+`UsbPmApi.sys` - so they are codes the class extension *receives*, not ones it sends downstream.
 
 | | WDK sample | In-box `UcmUcsiCx.sys` |
 |---|---|---|
@@ -149,7 +149,7 @@ Stated plainly, because the difference between a trusted tool and a guessing one
    e-marker" remained a live explanation on the evidence of empty responses.
 
    The decisive evidence is elsewhere, in `GET_CAPABILITY`, and does not depend on what is plugged
-   in — the controller declares this before any cable is considered, and would declare it with the
+   in - the controller declares this before any cable is considered, and would declare it with the
    ports empty. Its `bmOptionalFeatures` field reads **`0x000094`**:
 
    | Bit | Feature | This controller |
@@ -160,7 +160,7 @@ Stated plainly, because the difference between a trusted tool and a guessing one
    | 7 | PdResetNotificationSupported | yes |
 
    The controller explicitly declares that it does not provide cable details. It is not refusing
-   the command — `CCI` shows Command Completed with the Error bit clear, `CONTROL` echoes back
+   the command - `CCI` shows Command Completed with the Error bit clear, `CONTROL` echoes back
    `11 00 01`, and `GET_ERROR_STATUS` returns "no error reported" rather than "unrecognised
    command". It answers the question honestly, and the honest answer is that it has nothing.
 
@@ -189,7 +189,7 @@ Cable data being unavailable does not mean nothing is. Measured on the ThinkPad 
 | `GET_CAPABILITY` | Works. 2 connectors, PD 2.0, Type-C 1.0, BC 1.2, 3 alternate modes. |
 | `GET_CONNECTOR_CAPABILITY` | Works. USB 2.0, USB 3.x, alternate modes, dual role power, provider and consumer. |
 | `GET_CONNECTOR_STATUS` | Works. Attachment, partner type, power direction, power operation mode, and the RDO. |
-| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A — exactly the 65W charger plugged in. |
+| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A - exactly the 65W charger plugged in. |
 | `GET_CAM_SUPPORTED` / `GET_CURRENT_CAM` | Work. An alternate mode is active on both connectors. |
 | `GET_ALTERNATE_MODES` | **Declined**, despite being advertised. See below. |
 | `GET_CABLE_PROPERTY` | Not advertised, returns nothing. |
@@ -197,7 +197,7 @@ Cable data being unavailable does not mean nothing is. Measured on the ThinkPad 
 Two of those deserve comment.
 
 **The PDO path is the real product on hardware like this.** It answers the question most users
-actually have — how much power can this supply deliver, and how much am I drawing — and it is
+actually have - how much power can this supply deliver, and how much am I drawing - and it is
 verifiable against the label on the charger. It works on a controller that cannot report cables at
 all.
 
@@ -232,7 +232,7 @@ Billboard device 0x343C:0x0000
 
 which matches the monitor genuinely working through it.
 
-**This path is reached through documented USB hub IOCTLs** — `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX`
+**This path is reached through documented USB hub IOCTLs** - `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX`
 and `IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION`. Verified with `TestInterfaceEnabled` cleared
 and without elevation: the video answer still comes back. No registry change, no administrator
 rights, no test interface.
@@ -257,7 +257,7 @@ disconnected, which presents as "there are no Billboard devices" rather than as 
 
 Microsoft disables this interface by default, and says why: "to prevent it from being accessible to
 unauthorized users on a retail system." Once `TestInterfaceEnabled = 1`, **any unelevated process
-on the machine can drive the USB-C Power Delivery controller** — including the `SET_*` commands
+on the machine can drive the USB-C Power Delivery controller** - including the `SET_*` commands
 this tool deliberately never sends.
 
 That is the real cost of path B, and it is larger than "a first-run elevation step". Any shipped

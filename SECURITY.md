@@ -27,8 +27,8 @@ accessible to unauthorized users on a retail system".
 While it is enabled, **any program running as your user can send commands to your USB-C power
 controller**, not only Portmark. That includes commands Portmark itself refuses to send.
 
-This is a real trade-off, not a formality. The zero-setup features — device enumeration, alternate
-modes, video capability, slow-link detection — need none of it. If you do not need the extended
+This is a real trade-off, not a formality. The zero-setup features - device enumeration, alternate
+modes, video capability, slow-link detection - need none of it. If you do not need the extended
 tier, do not enable it, and run `portmark disable` when you are finished with it.
 
 ## Privacy
