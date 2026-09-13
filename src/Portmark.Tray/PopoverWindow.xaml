@@ -30,7 +30,7 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Path Data="{StaticResource IconPort}" Fill="{StaticResource Accent}"
                           Width="22" Height="22" Stretch="Uniform" Margin="0,0,8,0"/>
-                    <TextBlock Text="Portmark" Style="{StaticResource Heading}" VerticalAlignment="Center"/>
+                    <TextBlock Text="portmark" Style="{StaticResource Heading}" VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="DetailButton" Style="{StaticResource IconButton}"
