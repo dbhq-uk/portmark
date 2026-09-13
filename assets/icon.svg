@@ -8,11 +8,11 @@
 
   <rect width="256" height="256" rx="56" fill="#0B1220"/>
 
-  <!-- The USB-C receptacle as a solid stadium, with the mark knocked out of it. A knockout stays
-       legible at 16px where an outline plus a separate mark turns to noise. -->
+  <!-- A USB-C receptacle with a signal trace knocked out of it. A trace rather than a tick,
+       because the product measures rather than approves. -->
   <rect x="32" y="88" width="192" height="80" rx="40" fill="url(#g)"/>
 
-  <path d="M78 128 L108 150 L178 106"
-        fill="none" stroke="#0B1220" stroke-width="20"
+  <path d="M56 128 H92 L112 100 L140 156 L162 128 H200"
+        fill="none" stroke="#0B1220" stroke-width="16"
         stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
