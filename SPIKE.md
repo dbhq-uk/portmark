@@ -280,7 +280,3 @@ ucsiprobe --disable-test-interface     # elevated: puts the machine back as foun
 Diagnostic modes used during the spike, kept because they are how the above was found:
 `--discover` (buffer shape sweep) and `--sequence` (call ordering experiments).
 
-## Provenance
-
-No upstream WhatCable source was read. Both upstream repositories are unlicensed or ambiguously
-licensed, which was checked before anything else. See `CLEANROOM.md`.

@@ -6,8 +6,7 @@ namespace Portmark.Core.Ucsi;
 /// UCSI protocol constants and the Windows interface used to reach the PPM.
 ///
 /// Derived from the USB-IF UCSI specification and Microsoft Learn documentation, plus direct
-/// observation of the in-box driver on the machine under test. No third-party source was read;
-/// see CLEANROOM.md.
+/// observation of the in-box driver on the machine under test.
 /// </summary>
 public static class UcsiProtocol
 {

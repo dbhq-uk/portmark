@@ -3,7 +3,7 @@ namespace UcsiProbe.Native;
 /// <summary>
 /// UCSI protocol constants and IOCTL codes.
 ///
-/// Sources (clean room — no upstream WhatCable source was read, see CLEANROOM.md):
+/// Sources:
 ///   * USB Type-C Connector System Software Interface (UCSI) Specification, USB-IF / Intel.
 ///   * Microsoft Learn, "USB-C Connector System Software Interface (UCSI) Driver"
 ///     (command encodings cross-checked against the documented UcsiControl.exe examples).

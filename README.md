@@ -151,8 +151,8 @@ No. No telemetry, no network calls, no analytics. It is a single executable that
 hardware and prints the result.
 
 **Is this a port of the macOS app?**
-No. Portmark is an independent, clean-room Windows implementation and is not affiliated with any
-other USB-C tool. See [CLEANROOM.md](CLEANROOM.md).
+No. Portmark is an independent Windows implementation, written against the specifications, and
+is not affiliated with any other USB-C tool.
 
 ## Hardware coverage
 
@@ -182,11 +182,7 @@ attached.
 
 ## How this was built
 
-Portmark is an independent, clean-room implementation. No source from any existing USB-C inspection
-tool was read while building it, and the licence status of the prior art was checked *before*
-anything else, precisely so that this claim would be true. See [CLEANROOM.md](CLEANROOM.md).
-
-It was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
+Portmark was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
 Microsoft Learn documentation, and direct observation of the Windows driver stack. The reverse
 engineering that made it possible — including recovering the in-box UCSI interface GUID and control
 codes, which differ from the ones in Microsoft's published samples — is documented in

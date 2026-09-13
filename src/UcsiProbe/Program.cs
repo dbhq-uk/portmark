@@ -13,8 +13,6 @@ using UcsiProbe.Probes;
 //   B  user mode, after a one-time elevated TestInterfaceEnabled registry change
 //   C  only via UcsiControl.exe from the Microsoft MUTT package
 //   D  not readable on this hardware
-//
-// See CLEANROOM.md: no upstream WhatCable source was read.
 
 bool enableFlag = args.Contains("--enable-test-interface");
 bool disableFlag = args.Contains("--disable-test-interface");
