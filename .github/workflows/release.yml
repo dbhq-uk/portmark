@@ -19,7 +19,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Test before releasing
-        run: dotnet test tests/Portmark.Core.Tests/Portmark.Core.Tests.csproj -c Release
+        run: dotnet test Portmark.slnx -c Release
 
       - name: Publish
         run: dotnet publish src/Portmark.Cli/Portmark.Cli.csproj -c Release -o dist

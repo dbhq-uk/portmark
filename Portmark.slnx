@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Portmark.Cli/Portmark.Cli.csproj" />
+    <Project Path="src/Portmark.Core/Portmark.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Portmark.Core.Tests/Portmark.Core.Tests.csproj" />
+  </Folder>
+</Solution>

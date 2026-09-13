@@ -23,8 +23,8 @@ the output looks better. Output that looks worse but is true is the product.
 ## Building
 
 ```powershell
-dotnet build src/Portmark.Cli
-dotnet test tests/Portmark.Core.Tests
+dotnet build Portmark.slnx
+dotnet test Portmark.slnx
 ```
 
 Requires the .NET 10 SDK on Windows.

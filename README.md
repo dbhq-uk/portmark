@@ -198,7 +198,7 @@ way to find out how common it is. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```powershell
 dotnet publish src/Portmark.Cli -c Release
-dotnet test tests/Portmark.Core.Tests
+dotnet test Portmark.slnx
 ```
 
 Requires the .NET 10 SDK. The tests run on captured hardware byte vectors and need no USB-C device
