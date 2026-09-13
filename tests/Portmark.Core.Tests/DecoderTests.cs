@@ -369,3 +369,72 @@ public class LinkDiagnosticTests
         Assert.Equal(expected, Portmark.Core.Usb.LinkDiagnostic.ExpectedSpeed(bcdUsb));
     }
 }
+
+public class UsbTopologyTests
+{
+    private static UsbDeviceReport Device(string vid, string pid, string hubPath,
+                                          bool isHub = false, int port = 1) => new()
+    {
+        VendorId = vid,
+        ProductId = pid,
+        HubPath = hubPath,
+        IsHub = isHub,
+        Port = port,
+        DeviceClass = isHub ? "Hub" : "Mass Storage",
+        Product = isHub ? "Hub" : "Drive",
+    };
+
+    [Fact]
+    public void DeviceBehindAHubIsNestedUnderIt()
+    {
+        // The shape actually observed on the test machine: a dock hub on a root port, with the
+        // adapter behind it.
+        var devices = new List<UsbDeviceReport>
+        {
+            Device("0x05E3", "0x0608", @"\?\usb#root_hub30#5&aaa", isHub: true),
+            Device("0x343C", "0x0000", @"\?\usb#vid_05e3&pid_0608#6&bbb"),
+        };
+
+        List<UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+
+        UsbTreeNode root = Assert.Single(roots);
+        Assert.Equal("This PC", root.Label);
+        UsbTreeNode hub = Assert.Single(root.Children);
+        UsbTreeNode behind = Assert.Single(hub.Children);
+        Assert.Equal("0x343C", behind.Device!.VendorId);
+    }
+
+    [Fact]
+    public void IdenticalHubsAreLeftUnnestedRatherThanGuessed()
+    {
+        // Two hubs with the same vendor and product cannot be told apart by ID alone. Attaching
+        // children to whichever matched first would silently invent a topology.
+        var devices = new List<UsbDeviceReport>
+        {
+            Device("0x05E3", "0x0608", @"\?\usb#root_hub30#5&aaa", isHub: true, port: 1),
+            Device("0x05E3", "0x0608", @"\?\usb#root_hub30#5&aaa", isHub: true, port: 2),
+            Device("0x1111", "0x2222", @"\?\usb#vid_05e3&pid_0608#6&bbb"),
+            Device("0x3333", "0x4444", @"\?\usb#vid_05e3&pid_0608#6&ccc"),
+        };
+
+        List<UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+        List<UsbTreeNode> hubs = roots.SelectMany(r => r.Children).Where(n => n.Device?.IsHub == true).ToList();
+
+        Assert.All(hubs, h => Assert.True(h.AmbiguousTopology));
+        Assert.All(hubs, h => Assert.Empty(h.Children));
+    }
+
+    [Fact]
+    public void DeviceDirectlyOnThePcSitsAtTheTop()
+    {
+        var devices = new List<UsbDeviceReport>
+        {
+            Device("0x3938", "0x1191", @"\?\usb#root_hub30#5&aaa"),
+        };
+
+        List<UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+
+        Assert.True(Assert.Single(roots).IsRootHub);
+        Assert.Single(roots[0].Children);
+    }
+}

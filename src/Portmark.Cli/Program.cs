@@ -24,6 +24,10 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // Windows consoles default to a legacy code page, which turns the tree's box-drawing
+        // characters into question marks. Ask for UTF-8 and carry on if the host refuses.
+        try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch (IOException) { }
+
         if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
         {
             PrintHelp();
@@ -44,6 +48,7 @@ internal static class Program
             "altmodes" => AltModeSweep.Run(),
             "billboard" => Billboard(),
             "usb" => UsbDevices(),
+            "tree" => UsbTree(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -257,6 +262,53 @@ internal static class Program
 
             Console.WriteLine();
         }
+    }
+
+    /// <summary>Shows attached devices as the tree they physically form.</summary>
+    private static int UsbTree()
+    {
+        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
+        List<Portmark.Core.Model.UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+
+        if (roots.Count == 0)
+        {
+            Console.WriteLine("No USB devices found.");
+            return ExitOk;
+        }
+
+        foreach (Portmark.Core.Model.UsbTreeNode root in roots)
+        {
+            PrintNode(root, "", true, isRoot: true);
+            Console.WriteLine();
+        }
+
+        int slow = devices.Count(d => d.IsUnderperforming);
+        if (slow > 0)
+            Console.WriteLine($"{slow} device(s) running slower than they could. Run 'portmark usb' for detail.");
+
+        return ExitOk;
+    }
+
+    private static void PrintNode(Portmark.Core.Model.UsbTreeNode node, string prefix, bool last, bool isRoot = false)
+    {
+        if (isRoot)
+        {
+            Console.WriteLine(node.Label);
+        }
+        else
+        {
+            string branch = last ? "└─ " : "├─ ";
+            string detail = node.Device is { } d
+                ? $"  [{d.VendorId}:{d.ProductId}, {d.Speed}]"
+                : "";
+            string warn = node.Device?.IsUnderperforming == true ? "  ** slow **" : "";
+            string ambiguous = node.AmbiguousTopology ? "  (position uncertain: identical hubs)" : "";
+            Console.WriteLine($"{prefix}{branch}{node.Label}{detail}{warn}{ambiguous}");
+        }
+
+        string childPrefix = isRoot ? "" : prefix + (last ? "   " : "│  ");
+        for (int i = 0; i < node.Children.Count; i++)
+            PrintNode(node.Children[i], childPrefix, i == node.Children.Count - 1);
     }
 
     /// <summary>Lists every attached USB device, read from the devices themselves.</summary>
