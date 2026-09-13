@@ -40,6 +40,8 @@ public static class UcsiProtocol
     public const byte CmdGetCapability = 0x06;
     public const byte CmdGetConnectorCapability = 0x07;
     public const byte CmdGetAlternateModes = 0x0C;
+    public const byte CmdGetCamSupported = 0x0D;
+    public const byte CmdGetCurrentCam = 0x0E;
     public const byte CmdGetPdos = 0x10;
     public const byte CmdGetCableProperty = 0x11;
     public const byte CmdGetConnectorStatus = 0x12;
@@ -76,12 +78,43 @@ public static class UcsiProtocol
         CmdGetCapability => "GET_CAPABILITY",
         CmdGetConnectorCapability => "GET_CONNECTOR_CAPABILITY",
         CmdGetAlternateModes => "GET_ALTERNATE_MODES",
+        CmdGetCamSupported => "GET_CAM_SUPPORTED",
+        CmdGetCurrentCam => "GET_CURRENT_CAM",
         CmdGetPdos => "GET_PDOS",
         CmdGetCableProperty => "GET_CABLE_PROPERTY",
         CmdGetConnectorStatus => "GET_CONNECTOR_STATUS",
         CmdGetErrorStatus => "GET_ERROR_STATUS",
         _ => $"0x{command:X2}",
     };
+
+    /// <summary>
+    /// CONTROL for GET_ALTERNATE_MODES. The command-specific fields are a cumulative bit field in
+    /// the 64-bit CONTROL, not a packed byte at bit 16, so the offsets are absolute:
+    /// Recipient 16-18, ConnectorNumber 19-25, AlternateModeOffset 26-33, NumberOfAlternateModes
+    /// 34-35. Layout per the UCSI_GET_ALTERNATE_MODES_COMMAND structure Microsoft documents.
+    /// Recipient: 0 connector, 1 SOP (the attached partner), 2 SOP', 3 SOP''.
+    /// </summary>
+    public static ulong GetAlternateModes(byte recipient, byte connector, byte offset,
+                                          byte numberMinusOne = 0)
+        => CmdGetAlternateModes
+         | ((ulong)(recipient & 0x07) << 16)
+         | ((ulong)(connector & 0x7F) << 19)
+         | ((ulong)offset << 26)
+         | ((ulong)(numberMinusOne & 0x03) << 34);
+
+    /// <summary>
+    /// CONTROL for GET_PDOS. Absolute bit offsets: ConnectorNumber 16-22, PartnerPdo 23,
+    /// PdoOffset 24-31, NumberOfPdos 32-33, SourceOrSinkPdos 34, SourceCapabilitiesType 35-36.
+    /// </summary>
+    public static ulong GetPdos(byte connector, bool partner, byte offset,
+                                byte numberMinusOne, bool source, byte sourceCapabilitiesType = 0)
+        => CmdGetPdos
+         | ((ulong)(connector & 0x7F) << 16)
+         | ((partner ? 1UL : 0UL) << 23)
+         | ((ulong)offset << 24)
+         | ((ulong)(numberMinusOne & 0x03) << 32)
+         | ((source ? 1UL : 0UL) << 34)
+         | ((ulong)(sourceCapabilitiesType & 0x03) << 35);
 
     /// <summary>Formats the BCD version the PPM reports, e.g. 0x0100 becomes "1.0".</summary>
     public static string FormatVersion(ushort bcd)

@@ -20,8 +20,9 @@ public static class PortmarkReader
 
         int connectors = report.Capability.ConnectorCount ?? 0;
         bool cableDetails = report.Capability.Features?.CableDetailsAvailable ?? true;
+        bool pdoDetails = report.Capability.Features?.PowerDataObjectDetailsAvailable ?? false;
         for (byte index = 1; index <= connectors; index++)
-            report.Connectors.Add(ReadConnector(connection, index, cableDetails));
+            report.Connectors.Add(ReadConnector(connection, index, cableDetails, pdoDetails));
 
         return report;
     }
@@ -109,7 +110,7 @@ public static class PortmarkReader
     }
 
     private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
-                                                bool cableDetailsAvailable)
+                                                bool cableDetailsAvailable, bool pdoDetailsAvailable)
     {
         var report = new ConnectorReport { Index = index };
 
@@ -135,8 +136,60 @@ public static class PortmarkReader
                        + "here regardless of which cable is plugged in.",
                 VideoNote = "Not determinable. UCSI does not report video capability.",
             };
+        report.Power = pdoDetailsAvailable
+            ? ReadPower(connection, index, report)
+            : new PowerReport
+            {
+                DataAvailable = false,
+                Reason = "This PC's port controller does not report power delivery details.",
+            };
+
         report.Summary = Summarise(report);
         return report;
+    }
+
+    /// <summary>
+    /// Reads what the attached supply offers, and what was actually negotiated. This works on
+    /// controllers that cannot report cable data, and answers the most practically useful
+    /// question a user has: how much power can this thing actually deliver?
+    /// </summary>
+    private static PowerReport ReadPower(UcsiConnection connection, byte index, ConnectorReport report)
+    {
+        var power = new PowerReport();
+
+        UcsiResult partnerSource = connection.Execute(
+            UcsiProtocol.CmdGetPdos, UcsiProtocol.GetPdos(index, partner: true, 0, 3, source: true));
+        if (partnerSource.Ok && partnerSource.Payload.Length >= 4)
+            power.PartnerSource = PowerDataObject.DecodeAll(partnerSource.Payload);
+
+        UcsiResult localSource = connection.Execute(
+            UcsiProtocol.CmdGetPdos, UcsiProtocol.GetPdos(index, partner: false, 0, 3, source: true));
+        if (localSource.Ok && localSource.Payload.Length >= 4)
+            power.LocalSource = PowerDataObject.DecodeAll(localSource.Payload);
+
+        report.Raw.PartnerSourcePdosHex = partnerSource.Ok && partnerSource.Payload.Length > 0
+            ? Convert.ToHexString(partnerSource.Payload)
+            : null;
+
+        if (report.Raw.ConnectorStatusHex is not null && report.Connected == true)
+        {
+            byte[] status = Convert.FromHexString(report.Raw.ConnectorStatusHex);
+            if (status.Length >= 8)
+            {
+                uint rdo = BitConverter.ToUInt32(status, 4);
+                power.Negotiated = PowerDataObject.DecodeRequest(rdo, power.PartnerSource);
+            }
+        }
+
+        // Only count objects we actually understood.
+        List<PowerObjectReport> usable = power.PartnerSource.Where(p => p.Kind != "unrecognised").ToList();
+        power.MaxAvailableMilliwatts = usable.Count > 0 ? usable.Max(p => p.MaxPowerMilliwatts ?? 0) : null;
+
+        power.DataAvailable = power.PartnerSource.Count > 0 || power.LocalSource.Count > 0;
+        if (!power.DataAvailable)
+            power.Reason = "Nothing attached to this port is advertising power delivery objects.";
+
+        return power;
     }
 
     private static CableReport ReadCable(UcsiConnection connection, byte index, ConnectorReport report)
@@ -196,6 +249,16 @@ public static class PortmarkReader
             parts.Add(report.PowerDirection == "supplying" ? "supplying power" : "drawing power");
 
         string attached = parts.Count > 0 ? string.Join(", ", parts) : "Something attached";
+
+        // Power is the most useful thing we can say, and is available on controllers that cannot
+        // report cable data at all.
+        if (report.Power.DataAvailable && report.Power.MaxAvailableMilliwatts is int mw && mw > 0)
+        {
+            string offered = $"supply offers up to {mw / 1000.0:0.#}W";
+            string negotiated = report.Power.Negotiated is { } n ? $", drawing {n.Display}" : "";
+            parts.Add(offered + negotiated);
+            attached = string.Join(", ", parts);
+        }
 
         CableReport cable = report.Cable;
         if (!cable.DataAvailable) return $"{attached}. Cable: not reported by this PC.";

@@ -95,6 +95,13 @@ public sealed class ConnectorReport
     public string? PowerOperationMode { get; set; }
     public string? PowerDirection { get; set; }
     public CableReport Cable { get; set; } = new();
+
+    /// <summary>
+    /// What the attached supply offers and what was actually negotiated. Available on controllers
+    /// that advertise PDO details, independently of whether cable details are available.
+    /// </summary>
+    public PowerReport Power { get; set; } = new();
+
     public RawReport Raw { get; set; } = new();
 
     /// <summary>The one-line plain English rendering.</summary>
@@ -130,6 +137,50 @@ public sealed class CableReport
     public string? VideoNote { get; set; }
 }
 
+public sealed class PowerReport
+{
+    public bool DataAvailable { get; set; }
+    public string? Reason { get; set; }
+
+    /// <summary>What the attached supply advertises it can provide.</summary>
+    public List<PowerObjectReport> PartnerSource { get; set; } = [];
+
+    /// <summary>What this PC advertises it can provide.</summary>
+    public List<PowerObjectReport> LocalSource { get; set; } = [];
+
+    /// <summary>The contract actually in force, when one could be decoded.</summary>
+    public RequestReport? Negotiated { get; set; }
+
+    /// <summary>Highest power the attached supply offers, in milliwatts.</summary>
+    public int? MaxAvailableMilliwatts { get; set; }
+}
+
+public sealed class PowerObjectReport
+{
+    public string Kind { get; init; } = "";
+    public int? VoltageMillivolts { get; init; }
+    public int? MinVoltageMillivolts { get; init; }
+    public int? MaxVoltageMillivolts { get; init; }
+    public int? MaxCurrentMilliamps { get; init; }
+    public int? MaxPowerMilliwatts { get; init; }
+    public bool? UsbCommunicationsCapable { get; init; }
+    public bool? UnconstrainedPower { get; init; }
+    public bool? DualRolePower { get; init; }
+    public string Display { get; init; } = "";
+    public string Raw { get; init; } = "";
+}
+
+public sealed class RequestReport
+{
+    public int ObjectPosition { get; init; }
+    public int OperatingCurrentMilliamps { get; init; }
+    public int MaxOperatingCurrentMilliamps { get; init; }
+    public int? SelectedVoltageMillivolts { get; init; }
+    public int? NegotiatedPowerMilliwatts { get; init; }
+    public string Display { get; init; } = "";
+    public string Raw { get; init; } = "";
+}
+
 public sealed class SpeedReport
 {
     public int Mantissa { get; init; }
@@ -147,4 +198,5 @@ public sealed class RawReport
     public string? CablePropertyHex { get; set; }
     public string? ConnectorStatusCci { get; set; }
     public string? CablePropertyCci { get; set; }
+    public string? PartnerSourcePdosHex { get; set; }
 }

@@ -40,6 +40,7 @@ internal static class Program
         return command switch
         {
             "doctor" => Doctor(),
+            "explore" => Explore.Run(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -158,6 +159,25 @@ internal static class Program
         {
             Console.WriteLine($"Port {connector.Index}");
             Console.WriteLine($"  {connector.Summary}");
+
+            PowerReport power = connector.Power;
+            if (power.DataAvailable)
+            {
+                if (power.Negotiated is { } n)
+                    Console.WriteLine($"  Negotiated   {n.Display}");
+                if (power.PartnerSource.Count > 0)
+                {
+                    Console.WriteLine($"  Supply offers");
+                    foreach (PowerObjectReport pdo in power.PartnerSource)
+                        Console.WriteLine($"    - {pdo.Display}");
+                }
+                if (power.LocalSource.Count > 0)
+                {
+                    Console.WriteLine($"  This PC offers");
+                    foreach (PowerObjectReport pdo in power.LocalSource)
+                        Console.WriteLine($"    - {pdo.Display}");
+                }
+            }
 
             CableReport cable = connector.Cable;
             if (cable.DataAvailable)
