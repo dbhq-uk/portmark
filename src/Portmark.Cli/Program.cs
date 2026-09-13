@@ -49,6 +49,7 @@ internal static class Program
             "billboard" => Billboard(),
             "usb" => UsbDevices(),
             "tree" => UsbTree(),
+            "power" => PowerBudgetReport(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
@@ -309,6 +310,54 @@ internal static class Program
         string childPrefix = isRoot ? "" : prefix + (last ? "   " : "│  ");
         for (int i = 0; i < node.Children.Count; i++)
             PrintNode(node.Children[i], childPrefix, i == node.Children.Count - 1);
+    }
+
+    /// <summary>
+    /// Adds up what the devices on each hub asked for against what that hub can supply.
+    /// Over-subscribing a bus-powered hub is a common fault that Windows diagnoses as nothing at
+    /// all: devices drop out under load, or refuse to enumerate, with no explanation.
+    /// </summary>
+    private static int PowerBudgetReport()
+    {
+        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
+        List<Portmark.Core.Model.HubPowerReport> hubs = Portmark.Core.Usb.PowerBudget.Analyse(devices);
+
+        if (hubs.Count == 0)
+        {
+            Console.WriteLine("No USB hubs found.");
+            return ExitOk;
+        }
+
+        foreach (Portmark.Core.Model.HubPowerReport h in hubs.OrderByDescending(x => x.OverSubscribed))
+        {
+            string name = h.IsRootHub ? "This PC" : "Hub";
+            string powered = h.IsBusPowered ? "bus-powered" : "self-powered";
+            Console.WriteLine($"{name}  ({powered}, {h.PortCount} ports, {h.DeviceCount} device(s) attached)");
+            Console.WriteLine($"  Requested    {h.RequestedMilliamps} mA across attached devices");
+            if (h.AvailableMilliamps is int available)
+                Console.WriteLine($"  Shared pool  {available} mA"
+                                + (h.HubControlCurrentMilliamps > 0
+                                   ? $"  (500 mA total, less {h.HubControlCurrentMilliamps} mA for the hub itself)"
+                                   : ""));
+            else
+                Console.WriteLine("  Shared pool  none, this hub has its own power supply");
+            Console.WriteLine($"  Per port     {h.PerPortAllowanceMilliamps} mA guaranteed");
+
+            if (h.Note is not null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ** OVER-SUBSCRIBED **");
+                Console.WriteLine($"  {Wrap(h.Note, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+            }
+
+            Console.WriteLine();
+        }
+
+        int over = hubs.Count(h => h.OverSubscribed);
+        Console.WriteLine(over > 0
+            ? $"{over} hub(s) over-subscribed."
+            : "No hub is over-subscribed.");
+        return ExitOk;
     }
 
     /// <summary>Lists every attached USB device, read from the devices themselves.</summary>

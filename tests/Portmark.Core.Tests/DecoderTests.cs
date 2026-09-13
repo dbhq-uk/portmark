@@ -438,3 +438,60 @@ public class UsbTopologyTests
         Assert.Single(roots[0].Children);
     }
 }
+
+public class PowerBudgetTests
+{
+    [Fact]
+    public void BusPoweredHubHasASharedBudgetLessItsOwnDraw()
+    {
+        // 500 mA from the upstream port, less 100 mA the hub's own electronics take.
+        HubPowerReport r = Portmark.Core.Usb.PowerBudget.Evaluate(
+            "hub", isBusPowered: true, controlCurrentMilliamps: 100,
+            portCount: 4, requestedMilliamps: 300, deviceCount: 3);
+
+        Assert.Equal(400, r.AvailableMilliamps);
+        Assert.False(r.OverSubscribed);
+        Assert.Null(r.Note);
+    }
+
+    [Fact]
+    public void BusPoweredHubAskedForMoreThanItHasIsFlagged()
+    {
+        HubPowerReport r = Portmark.Core.Usb.PowerBudget.Evaluate(
+            "hub", isBusPowered: true, controlCurrentMilliamps: 100,
+            portCount: 4, requestedMilliamps: 900, deviceCount: 4);
+
+        Assert.True(r.OverSubscribed);
+        Assert.NotNull(r.Note);
+        // The wording must not claim a measurement it has not taken.
+        Assert.Contains("requested, not what they are drawing", r.Note);
+    }
+
+    [Fact]
+    public void SelfPoweredHubHasNoSharedPoolAtAll()
+    {
+        // A self-powered hub has its own supply and a per-port guarantee. Reporting
+        // 500 mA x ports would look like a budget without being one.
+        HubPowerReport r = Portmark.Core.Usb.PowerBudget.Evaluate(
+            "hub", isBusPowered: false, controlCurrentMilliamps: 0,
+            portCount: 4, requestedMilliamps: 1900, deviceCount: 4);
+
+        Assert.Null(r.AvailableMilliamps);
+        Assert.False(r.OverSubscribed);
+        Assert.Equal(500, r.PerPortAllowanceMilliamps);
+    }
+
+    [Fact]
+    public void BusPoweredPerPortGuaranteeIsLowerThanSelfPowered()
+    {
+        HubPowerReport bus = Portmark.Core.Usb.PowerBudget.Evaluate("h", true, 0, 4, 0, 0);
+        Assert.Equal(100, bus.PerPortAllowanceMilliamps);
+    }
+
+    [Fact]
+    public void AHungryHubCannotProduceANegativeBudget()
+    {
+        HubPowerReport r = Portmark.Core.Usb.PowerBudget.Evaluate("h", true, 900, 4, 0, 0);
+        Assert.Equal(0, r.AvailableMilliamps);
+    }
+}
