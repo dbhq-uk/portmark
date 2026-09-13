@@ -107,6 +107,14 @@ without sending anything meaningful.
 - **Commands need retry with backoff.** A command issued while the PPM is still settling returns
   `STATUS_INVALID_DEVICE_STATE (Win32 22)`. Retrying at 150 ms intervals clears it. A fresh handle
   per command is also required.
+- **Never send `ACK_CC_CI`.** This corrects an assumption carried into the spike. UCSI requires the
+  acknowledgement handshake *of the operating system's policy manager*, and on Windows that is
+  `UcmUcsiCx`, which is driving the same controller. Sending it ourselves steals a completion
+  Windows was waiting for. Measured over the fifteen seconds following a full read: with
+  acknowledgements the device dropped out of PnP enumeration for about two seconds; without them it
+  stayed enumerable **15/15**. Reads succeed either way, because Windows performs the handshake on
+  our behalf. A passive reader must not touch it. Reproduce with `portmark stress` against
+  `portmark stress --no-ack`.
 
 ## Data actually read, unelevated
 

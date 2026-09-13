@@ -1,0 +1,204 @@
+using Microsoft.Win32;
+using Portmark.Core.Model;
+using Portmark.Core.Ucsi;
+
+namespace Portmark.Core;
+
+/// <summary>
+/// The single entry point: work out whether this machine can answer the question, and if it can,
+/// answer it for every connector.
+/// </summary>
+public static class PortmarkReader
+{
+    public static PortmarkReport Read()
+    {
+        var report = new PortmarkReport { Machine = ReadMachine() };
+        UcsiConnection? connection = DetectCapability(report.Capability);
+
+        if (connection is null || report.Capability.Status != CapabilityStatus.Ok)
+            return report;
+
+        int connectors = report.Capability.ConnectorCount ?? 0;
+        for (byte index = 1; index <= connectors; index++)
+            report.Connectors.Add(ReadConnector(connection, index));
+
+        return report;
+    }
+
+    /// <summary>
+    /// Decides, and explains, whether cable data is reachable. Runs before any answer is produced,
+    /// so that a machine which cannot do this is told so rather than shown an empty result.
+    /// </summary>
+    public static UcsiConnection? DetectCapability(CapabilityReport capability)
+    {
+        IReadOnlyList<string> devices = UcsiDevice.FindDevices();
+        capability.UcmDevicePresent = devices.Count > 0;
+        capability.UcmDeviceInstanceId = devices.FirstOrDefault();
+
+        if (!capability.UcmDevicePresent)
+        {
+            capability.Status = CapabilityStatus.Unsupported;
+            capability.Explanation =
+                "This PC has no USB-C connector manager device, so Windows holds no cable "
+              + "information to read. This is a property of the hardware and firmware, and no "
+              + "software can work around it.";
+            return null;
+        }
+
+        string instanceId = capability.UcmDeviceInstanceId!;
+        capability.TestInterfaceEnabled = UcsiDevice.IsTestInterfaceEnabled(instanceId);
+
+        UcsiConnection? connection = UcsiConnection.TryOpen();
+        capability.TestInterfacePublished = connection is not null;
+
+        if (connection is null)
+        {
+            capability.Status = CapabilityStatus.NeedsSetup;
+            capability.Explanation = capability.TestInterfaceEnabled
+                ? "The port controller interface is switched on but Windows has not published it "
+                + "yet. This normally clears after the device restarts."
+                : "Windows can read your cable, but the interface that exposes it is switched off "
+                + "by default.";
+            capability.Remedy = capability.TestInterfaceEnabled
+                ? "Restart the USB-C device, or reboot."
+                : "Run 'portmark enable' as an administrator. This is a one-time step, and "
+                + "'portmark disable' reverses it.";
+            return null;
+        }
+
+        UcsiResult state = connection.ReadState();
+        if (!state.Ok)
+        {
+            capability.Status = CapabilityStatus.Unsupported;
+            capability.Explanation =
+                $"The port controller interface is present but did not respond: {state.Error}";
+            return null;
+        }
+
+        ushort version = BitConverter.ToUInt16(state.Payload, UcsiProtocol.OffsetVersion);
+        capability.UcsiVersion = UcsiProtocol.FormatVersion(version);
+
+        UcsiResult caps = connection.Execute(UcsiProtocol.CmdGetCapability);
+        if (!caps.Ok || caps.Payload.Length < 5)
+        {
+            capability.Status = CapabilityStatus.Unsupported;
+            capability.Explanation =
+                "The port controller did not report its capabilities, so its connectors cannot be "
+              + "enumerated.";
+            return null;
+        }
+
+        capability.ConnectorCount = caps.Payload[4] & 0x7F;
+        capability.Status = CapabilityStatus.Ok;
+        capability.Explanation =
+            $"Reading {capability.ConnectorCount} connector(s) over UCSI {capability.UcsiVersion}.";
+        return connection;
+    }
+
+    private static ConnectorReport ReadConnector(UcsiConnection connection, byte index)
+    {
+        var report = new ConnectorReport { Index = index };
+
+        UcsiResult status = connection.ExecuteForConnector(UcsiProtocol.CmdGetConnectorStatus, index);
+        if (status.Ok)
+        {
+            report.Raw.ConnectorStatusHex = Convert.ToHexString(status.Payload);
+            report.Raw.ConnectorStatusCci = $"0x{status.Cci:X8}";
+            ConnectorStatus.Apply(status.Payload, report);
+        }
+        else
+        {
+            report.Connected = null;
+        }
+
+        report.Cable = ReadCable(connection, index, report);
+        report.Summary = Summarise(report);
+        return report;
+    }
+
+    private static CableReport ReadCable(UcsiConnection connection, byte index, ConnectorReport report)
+    {
+        UcsiResult cable = connection.ExecuteForConnector(UcsiProtocol.CmdGetCableProperty, index);
+
+        if (!cable.Ok)
+        {
+            return new CableReport
+            {
+                DataAvailable = false,
+                Reason = $"The cable query failed: {cable.Error}",
+                VideoNote = "Not determinable. UCSI does not report video capability.",
+            };
+        }
+
+        report.Raw.CablePropertyHex = Convert.ToHexString(cable.Payload);
+        report.Raw.CablePropertyCci = $"0x{cable.Cci:X8}";
+
+        if (cable.NotSupported)
+        {
+            return new CableReport
+            {
+                DataAvailable = false,
+                Reason = "This port controller does not implement the cable query.",
+                VideoNote = "Not determinable. UCSI does not report video capability.",
+            };
+        }
+
+        if (!cable.NoPayload) return CableProperty.Decode(cable.Payload);
+
+        // The command completed and returned nothing. Ask the controller whether that was a
+        // refusal or a genuine "there is nothing here", rather than assuming either.
+        UcsiResult error = connection.Execute(UcsiProtocol.CmdGetErrorStatus);
+        bool unrecognised = error.Ok && ErrorStatus.IsUnrecognisedCommand(error.Payload);
+
+        string reason = unrecognised
+            ? "This port controller does not implement the cable query, so no cable can be identified."
+            : report.Connected == false
+                ? "Nothing is attached to this port."
+                : "The cable carries no e-marker, so it cannot describe itself. Cables rated at or "
+                + "below 3A are not required to have one.";
+
+        return CableProperty.Decode([], reason);
+    }
+
+    /// <summary>The plain English one-liner, stating only what was actually reported.</summary>
+    public static string Summarise(ConnectorReport report)
+    {
+        if (report.Connected is null) return "Port state could not be read.";
+        if (report.Connected == false) return "Nothing attached.";
+
+        var parts = new List<string>();
+        if (report.PartnerType is not null) parts.Add(report.PartnerType);
+        if (report.PowerOperationMode is not null) parts.Add($"over {report.PowerOperationMode}");
+        if (report.PowerDirection is not null)
+            parts.Add(report.PowerDirection == "supplying" ? "supplying power" : "drawing power");
+
+        string attached = parts.Count > 0 ? string.Join(", ", parts) : "Something attached";
+
+        CableReport cable = report.Cable;
+        if (!cable.DataAvailable) return $"{attached}. Cable: not identified.";
+
+        var cableParts = new List<string>();
+        if (cable.MaxWattsAt20Volts is int watts) cableParts.Add($"{watts}W");
+        else if (cable.CurrentCapabilityMilliamps is int ma) cableParts.Add($"{ma} mA");
+        if (cable.Speed is not null) cableParts.Add(cable.Speed.Display);
+
+        string cableText = cableParts.Count > 0 ? string.Join(", ", cableParts) : "identified";
+        return $"{attached}. Cable: {cableText}.";
+    }
+
+    private static MachineReport ReadMachine()
+    {
+        using RegistryKey? bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+        using RegistryKey? cv = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+
+        return new MachineReport
+        {
+            Manufacturer = bios?.GetValue("SystemManufacturer")?.ToString(),
+            Model = bios?.GetValue("SystemProductName")?.ToString(),
+            BiosVersion = bios?.GetValue("BIOSVersion")?.ToString(),
+            OsVersion = $"{Environment.OSVersion.Version.Major}.0."
+                      + $"{cv?.GetValue("CurrentBuild")}.{cv?.GetValue("UBR")}",
+            OsDisplayVersion = cv?.GetValue("DisplayVersion")?.ToString(),
+        };
+    }
+}
