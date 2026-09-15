@@ -226,14 +226,25 @@ internal static class Program
                 Console.WriteLine($"  Port supports {string.Join(", ", supports)}");
             }
 
-            if (connector.ActiveAlternateModeIndex is int cam)
-                Console.WriteLine($"  Alt mode     index {cam} active (identity unavailable on this PC)");
+            if (connector.SupportedAlternateModes is { } modes)
+                Console.WriteLine(modes.DataAvailable && modes.Modes.Count > 0
+                    ? $"  Alt modes    {string.Join(", ", modes.Modes.Select(m => m.Name))}{(modes.Complete ? "" : " (list incomplete)")}"
+                    : $"  Alt modes    {(modes.DataAvailable ? "none listed" : "not listed by this controller")}");
+            if (connector.PartnerAlternateModes is { DataAvailable: true, Modes.Count: > 0 } offered)
+                Console.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => m.Name))}{(offered.Complete ? "" : " (list incomplete)")}");
+            if (connector.ActiveAlternateMode is { } active)
+                Console.WriteLine($"  Current mode {active.Name}"
+                                + (connector.ActiveAlternateModeConfirmed
+                                    ? ""
+                                    : ", on the controller's word alone and not confirmed"));
 
             PowerReport power = connector.Power;
             if (power.DataAvailable)
             {
                 if (power.Negotiated is { } n)
                     Console.WriteLine($"  Negotiated   {n.Display}");
+                if (connector.BatteryChargingStatus is { } charging)
+                    Console.WriteLine($"  Charging     {charging}, according to the controller");
                 if (power.PartnerSource.Count > 0)
                 {
                     Console.WriteLine($"  Supply offers");
@@ -245,6 +256,12 @@ internal static class Program
                     Console.WriteLine($"  This PC offers");
                     foreach (PowerObjectReport pdo in power.LocalSource)
                         Console.WriteLine($"    - {pdo.Display}");
+                }
+                if (power.PowerDiagnosis is not null)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("  ** DRAWING LESS THAN THIS SUPPLY OFFERS **");
+                    Console.WriteLine($"  {Wrap(power.PowerDiagnosis, 72).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
                 }
             }
 
@@ -260,6 +277,13 @@ internal static class Program
             else if (cable.Reason is not null)
             {
                 Console.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+            }
+
+            if (cable.Inferred is { } inferred)
+            {
+                Console.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.#}A, deduced not reported");
+                string deduction = $"{inferred.Evidence} {inferred.Basis} {inferred.Conclusion}";
+                Console.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
             Console.WriteLine();

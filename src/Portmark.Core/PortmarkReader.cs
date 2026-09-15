@@ -25,10 +25,9 @@ public static class PortmarkReader
             return report;
 
         int connectors = report.Capability.ConnectorCount ?? 0;
-        bool cableDetails = report.Capability.Features?.CableDetailsAvailable ?? true;
-        bool pdoDetails = report.Capability.Features?.PowerDataObjectDetailsAvailable ?? false;
         for (byte index = 1; index <= connectors; index++)
-            report.Connectors.Add(ReadConnector(connection, index, cableDetails, pdoDetails));
+            report.Connectors.Add(ReadConnector(connection, index, report.Capability.Features,
+                                                report.Machine.BatteryPercent));
 
         return report;
     }
@@ -117,8 +116,12 @@ public static class PortmarkReader
     }
 
     private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
-                                                bool cableDetailsAvailable, bool pdoDetailsAvailable)
+                                                PpmFeatureReport? features, int? batteryPercent = null)
     {
+        bool cableDetailsAvailable = features?.CableDetailsAvailable ?? true;
+        bool pdoDetailsAvailable = features?.PowerDataObjectDetailsAvailable ?? false;
+        bool alternateModeDetailsAvailable = features?.AlternateModeDetailsAvailable ?? false;
+
         var report = new ConnectorReport { Index = index };
 
         UcsiResult caps = connection.ExecuteForConnector(UcsiProtocol.CmdGetConnectorCapability, index);
@@ -129,14 +132,18 @@ public static class PortmarkReader
         if (camSupported.Ok && camSupported.Payload.Length >= 1)
             report.SupportedAlternateModeBitmap = camSupported.Payload[0];
 
+        // The raw byte is recorded; whether it names a mode is decided later, with the partner's
+        // list in hand. 0xFF is UCSI's "no mode" and is passed through as such. This controller
+        // returns 0 for an empty port too, which is why the byte is never enough on its own. Null
+        // means the read failed, which is a different thing from "none".
         UcsiResult currentCam = connection.ExecuteForConnector(UcsiProtocol.CmdGetCurrentCam, index);
-        if (currentCam.Ok && currentCam.Payload.Length >= 1 && currentCam.Payload[0] != 0xFF)
+        byte? currentCamByte = null;
+        if (currentCam.Ok)
         {
-            report.ActiveAlternateModeIndex = currentCam.Payload[0];
-            report.AlternateModeNote =
-                "An alternate mode is active on this port, but this controller declines "
-              + "GET_ALTERNATE_MODES, so which mode it is cannot be determined. Video capability "
-              + "is therefore unknown rather than absent.";
+            report.Raw.CurrentCamHex = Convert.ToHexString(currentCam.Payload);
+            report.Raw.CurrentCamCci = $"0x{currentCam.Cci:X8}";
+            if (!currentCam.Errored && !currentCam.NotSupported && currentCam.Payload.Length >= 1)
+                currentCamByte = currentCam.Payload[0];
         }
 
         UcsiResult status = connection.ExecuteForConnector(UcsiProtocol.CmdGetConnectorStatus, index);
@@ -151,6 +158,8 @@ public static class PortmarkReader
             report.Connected = null;
         }
 
+        if (alternateModeDetailsAvailable) ReadAlternateModes(connection, index, report, currentCamByte);
+
         report.Cable = cableDetailsAvailable
             ? ReadCable(connection, index, report)
             : new CableReport
@@ -159,7 +168,7 @@ public static class PortmarkReader
                 Reason = "This PC's port controller does not report cable information. It does not "
                        + "advertise the cable details capability, so no cable can be identified "
                        + "here regardless of which cable is plugged in.",
-                VideoNote = "Not determinable. UCSI does not report video capability.",
+                VideoNote = "Not determinable from the cable. UCSI does not report a cable's video capability; what the port and the attached device offer is under alternate modes.",
             };
         report.Power = pdoDetailsAvailable
             ? ReadPower(connection, index, report)
@@ -169,9 +178,57 @@ public static class PortmarkReader
                 Reason = "This PC's port controller does not report power delivery details.",
             };
 
+        // Only when the cable could not speak for itself. If it did, its own words stand, and a
+        // deduction alongside them would be noise at best and a contradiction at worst.
+        if (!report.Cable.DataAvailable)
+            report.Cable.Inferred = CableInference.FromPower(report.Power);
+
+        bool consuming = report.PowerDirection == "consuming";
+        report.Power.IsUnderNegotiated = ChargeDiagnostic.IsUnderNegotiated(
+            report.Power.Negotiated?.NegotiatedPowerMilliwatts, report.Power.MaxAvailableMilliwatts, consuming);
+        report.Power.PowerDiagnosis = ChargeDiagnostic.Explain(
+            report.Power.Negotiated?.NegotiatedPowerMilliwatts, report.Power.MaxAvailableMilliwatts, consuming,
+            report.BatteryChargingStatusCode, batteryPercent);
+
         report.Summary = Summarise(report);
         return report;
     }
+
+    /// <summary>
+    /// Lists the modes the port can enter and the modes the partner offers, then says which is in
+    /// use. The interpretation lives in <see cref="AlternateModes.Interpret"/> so it can be tested
+    /// without a controller; this method only issues the reads and records every exchange.
+    /// </summary>
+    private static void ReadAlternateModes(UcsiConnection connection, byte index, ConnectorReport report,
+                                           byte? currentCam)
+    {
+        report.SupportedAlternateModes = EnumerateAlternateModes(connection, index, report, recipient: 0);
+        if (report.Connected == true)
+            report.PartnerAlternateModes = EnumerateAlternateModes(connection, index, report, recipient: 1);
+
+        (report.AlternateModeNote, report.ActiveAlternateMode, report.ActiveAlternateModeConfirmed) = AlternateModes.Interpret(
+            report.SupportedAlternateModes, report.PartnerAlternateModes, report.Connected, currentCam,
+            report.PartnerAlternateModeFlag);
+        report.ActiveAlternateModeIndex = report.ActiveAlternateMode?.Offset;
+    }
+
+    /// <summary>Every request is a read, and every request is recorded before it is interpreted.</summary>
+    private static AlternateModeListReport EnumerateAlternateModes(UcsiConnection connection, byte index,
+                                                                   ConnectorReport report, byte recipient)
+        => AlternateModes.Enumerate(offset =>
+        {
+            ulong control = UcsiProtocol.GetAlternateModes(recipient, index, offset, 1);
+            UcsiResult r = connection.Execute(UcsiProtocol.CmdGetAlternateModes, control);
+            report.Raw.AlternateModeExchanges.Add(new UcsiExchangeReport
+            {
+                Command = $"GET_ALTERNATE_MODES recipient={recipient} offset={offset}",
+                ControlHex = $"0x{control:X12}",
+                Cci = r.Ok ? $"0x{r.Cci:X8}" : null,
+                PayloadHex = r.Ok ? Convert.ToHexString(r.Payload) : null,
+                Error = r.Error,
+            });
+            return r;
+        });
 
     /// <summary>
     /// Reads what the attached supply offers, and what was actually negotiated. This works on
@@ -227,7 +284,7 @@ public static class PortmarkReader
             {
                 DataAvailable = false,
                 Reason = $"The cable query failed: {cable.Error}",
-                VideoNote = "Not determinable. UCSI does not report video capability.",
+                VideoNote = "Not determinable from the cable. UCSI does not report a cable's video capability; what the port and the attached device offer is under alternate modes.",
             };
         }
 
@@ -240,7 +297,7 @@ public static class PortmarkReader
             {
                 DataAvailable = false,
                 Reason = "This port controller does not implement the cable query.",
-                VideoNote = "Not determinable. UCSI does not report video capability.",
+                VideoNote = "Not determinable from the cable. UCSI does not report a cable's video capability; what the port and the attached device offer is under alternate modes.",
             };
         }
 
@@ -286,7 +343,11 @@ public static class PortmarkReader
         }
 
         CableReport cable = report.Cable;
-        if (!cable.DataAvailable) return $"{attached}. Cable: not reported by this PC.";
+        if (!cable.DataAvailable)
+            return cable.Inferred?.MinimumCurrentRatingMilliamps is int rating
+                ? $"{attached}. Cable: not reported by this PC, but it carries at least "
+                + $"{rating / 1000.0:0.#}A for the supply to be offering that."
+                : $"{attached}. Cable: not reported by this PC.";
 
         var cableParts = new List<string>();
         if (cable.MaxWattsAt20Volts is int watts) cableParts.Add($"{watts}W");
@@ -310,6 +371,7 @@ public static class PortmarkReader
             OsVersion = $"{Environment.OSVersion.Version.Major}.0."
                       + $"{cv?.GetValue("CurrentBuild")}.{cv?.GetValue("UBR")}",
             OsDisplayVersion = cv?.GetValue("DisplayVersion")?.ToString(),
+            BatteryPercent = Native.PowerStatus.BatteryPercent(),
         };
     }
 }

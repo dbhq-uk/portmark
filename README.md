@@ -6,7 +6,7 @@
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4.svg)](#install)
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
-[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen.svg)](#building)
+[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](#building)
 
 **Find out what your USB-C ports, chargers and adapters can actually do - and get told
 "unknown" when your PC genuinely cannot tell you.**
@@ -32,6 +32,7 @@ Port 1
   Downstream facing port, over USB Power Delivery, drawing power,
   supply offers up to 65W, drawing 5V at 3A (15W).
   Port supports USB 2.0, USB 3.x, alternate modes, dual role power
+  Alt modes    Lenovo vendor mode, Intel Thunderbolt 3, DisplayPort Alternate Mode
   Negotiated   5V at 3A (15W)
   Supply offers
     - 5V at 3A (15W)
@@ -59,6 +60,35 @@ Samsung Portable SSD T7
 Both halves of that comparison come from the hardware - `bcdUSB` from the device's own descriptor
 and the negotiated speed from the hub - so it is a measurement, not a guess. Windows knows this and
 never tells you.
+
+## And when you are losing power
+
+The same comparison works for charging. portmark reads what the supply offers and the contract
+actually in force, and tells you when most of the offer is going unused:
+
+```
+Port 1
+  Negotiated   5V at 3A (15W)
+  Charging     nominal charging rate, according to the controller
+  Supply offers
+    - 20V at 5A (100W)
+
+  ** DRAWING LESS THAN THIS SUPPLY OFFERS **
+  A 15W contract is in force, but this supply offers up to 100W. The controller
+  nonetheless reports a nominal charging rate, so its firmware is not treating this
+  as a shortfall. The battery is at 43 percent, so a full battery does not explain
+  this.
+```
+
+That is a real reading from the machine portmark was developed on, and it matters because
+everything else on that machine said the opposite. Windows reported the battery as charging while
+it fell from 46 percent to 43 percent. The port controller reported a nominal charging rate
+throughout. The battery charge is read for one reason: a nearly full battery draws very little and
+that is correct, so without it the honest answer would have to include an excuse that did not
+apply.
+
+portmark names no cause. It reports the gap, what the controller thinks of it, and what the
+evidence rules out.
 
 ## Why you cannot just look at the connector
 
@@ -148,8 +178,11 @@ Being specific about this matters more than the feature list.
 
 - **Cable e-marker data depends entirely on your PC's controller.** Many controllers do not
   advertise `CableDetailsAvailable`, and when they do not, no software on any operating system can
-  extract cable details from them. portmark checks that capability bit and tells you plainly rather
-  than blaming your cable.
+  read the cable's e-marker through them. portmark checks that capability bit and tells you plainly
+  rather than blaming your cable. One thing survives even then: if the attached supply offers more
+  than 3A, the cable must be able to carry it, because a supply reads the cable before offering
+  that much. portmark reports that as a deduction, labelled as one, and never as something the
+  cable said.
 - **Video is reported from Billboard descriptors, not guessed.** If an adapter exposes no Billboard
   device, video capability is reported as unknown. An adapter without one is not an adapter without
   video.
@@ -167,6 +200,8 @@ The zero-setup tier does. The extended tier needs a UCSI 2.x capable build, whic
 **Why does it say my cable is "not reported" when I know it is a 100W cable?**
 Almost certainly because your PC's port controller does not advertise `CableDetailsAvailable`. The
 cable is fine; the controller will not describe it. `portmark --human` says which case you are in.
+If a supply offering more than 3A is attached, portmark will still tell you the cable carries at
+least that much, deduced from the power contract rather than read from the cable.
 
 **Is it safe? It wants administrator rights.**
 Only for the optional extended tier, only once, and only to set a single registry value. portmark
@@ -179,9 +214,13 @@ hardware and prints the result.
 
 ## Hardware coverage
 
-Verified on a Lenovo ThinkPad T16 Gen 2 running Windows 11 25H2. On that machine the power
-delivery decoding was checked against physical reality: the attached supply decodes to 5V/3A,
-9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W charger.
+Verified on a Lenovo ThinkPad T16 Gen 2 (AMD, type 21K7, BIOS R2FET70W) running Windows 11 25H2.
+On that machine the power delivery decoding was checked against physical reality: the attached
+supply decodes to 5V/3A, 9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W
+charger. The alternate mode list was checked against the machine too: the USB4 port lists
+Thunderbolt 3 and DisplayPort, the USB 3.2 port lists DisplayPort only, matching the spec sheet.
+That controller does not report cable details: it answers `GET_CABLE_PROPERTY` with UCSI's
+Not Supported indicator, exactly as it answers an undefined command.
 
 That is one machine. **If you run portmark, please open an issue with the output of
 `portmark --human`** - particularly whether your controller reports cable details. That capability

@@ -276,6 +276,7 @@ public static class BillboardReader
     {
         SvidDisplayPort => "DisplayPort Alternate Mode",
         0x8087 => "Intel Thunderbolt 3",
+        0x17EF => "Lenovo vendor mode",
         0xFF00 => "USB Type-C Bridge",
         _ => $"vendor-specific SVID 0x{svid:X4}",
     };

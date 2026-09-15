@@ -271,14 +271,18 @@ public class UcsiProtocolTests
     [Fact]
     public void AlternateModesCommandUsesAbsoluteBitOffsets()
     {
-        // Recipient at 16-18, ConnectorNumber at 19-25, AlternateModeOffset at 26-33,
-        // NumberOfAlternateModes at 34-35. Packing these as a byte at bit 16 produced empty
-        // responses that looked like unsupported hardware.
-        ulong control = UcsiProtocol.GetAlternateModes(recipient: 1, connector: 2, offset: 0);
+        // Recipient at 16-18, ConnectorNumber at 24-30, AlternateModeOffset at 32-39,
+        // NumberOfAlternateModes at 40-41. This test once asserted the connector at bit 19, which
+        // is a reserved field: the controller saw connector zero, answered Error with
+        // "non-existent connector number", and that was written up as the command being declined.
+        ulong control = UcsiProtocol.GetAlternateModes(recipient: 1, connector: 2, offset: 3, numberMinusOne: 1);
 
         Assert.Equal(UcsiProtocol.CmdGetAlternateModes, (byte)(control & 0xFF));
         Assert.Equal(1UL, (control >> 16) & 0x07);
-        Assert.Equal(2UL, (control >> 19) & 0x7F);
+        Assert.Equal(0UL, (control >> 19) & 0x1F);
+        Assert.Equal(2UL, (control >> 24) & 0x7F);
+        Assert.Equal(3UL, (control >> 32) & 0xFF);
+        Assert.Equal(1UL, (control >> 40) & 0x03);
     }
 
     [Fact]

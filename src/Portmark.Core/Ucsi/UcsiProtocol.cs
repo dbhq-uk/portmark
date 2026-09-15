@@ -46,12 +46,22 @@ public static class UcsiProtocol
     public const byte CmdGetConnectorStatus = 0x12;
     public const byte CmdGetErrorStatus = 0x13;
 
-    // CCI bits, per the UCSI specification.
-    public const uint CciBusy = 1u << 26;
-    public const uint CciAcknowledge = 1u << 27;
-    public const uint CciError = 1u << 28;
+    // CCI indicator bits, per UCSI Table 4-2 and Microsoft's UCSI_CCI: bits 1-7 connector change,
+    // 8-15 data length, then from bit 25 upward Not Supported, Cancel Completed, Reset Completed,
+    // Busy, Acknowledge Command, Error, Command Completed.
+    //
+    // These sat two bits low once. That misread this controller's "Not Supported" answer to
+    // GET_CABLE_PROPERTY (0x82000000) as a bare completion, and its "Error" answer to a
+    // mis-encoded GET_ALTERNATE_MODES (0xC0000000) as an empty success, and both misreadings went
+    // into the spike write-up. The undefined opcode 0x7F returns 0x82000000 too, which is the
+    // check: an unknown command must come back Not Supported.
+    public const uint CciNotSupported = 1u << 25;
+    public const uint CciCancelCompleted = 1u << 26;
+    public const uint CciResetCompleted = 1u << 27;
+    public const uint CciBusy = 1u << 28;
+    public const uint CciAcknowledge = 1u << 29;
+    public const uint CciError = 1u << 30;
     public const uint CciCommandCompleted = 1u << 31;
-    public const uint CciNotSupported = 1u << 23;
 
     /// <summary>
     /// Builds the 64-bit CONTROL value: command in bits 0-7, data length in bits 8-15, and
@@ -87,19 +97,24 @@ public static class UcsiProtocol
     };
 
     /// <summary>
-    /// CONTROL for GET_ALTERNATE_MODES. The command-specific fields are a cumulative bit field in
-    /// the 64-bit CONTROL, not a packed byte at bit 16, so the offsets are absolute:
-    /// Recipient 16-18, ConnectorNumber 19-25, AlternateModeOffset 26-33, NumberOfAlternateModes
-    /// 34-35. Layout per the UCSI_GET_ALTERNATE_MODES_COMMAND structure Microsoft documents.
+    /// CONTROL for GET_ALTERNATE_MODES. This is the one command whose connector number is not at
+    /// bit 16. The layout is Recipient 16-18, reserved 19-23, ConnectorNumber 24-30,
+    /// AlternateModeOffset 32-39, NumberOfAlternateModes 40-41 (UCSI Table 4-17; Linux's
+    /// UCSI_GET_ALTMODE_CONNECTOR_NUMBER shifts by 24).
+    ///
+    /// The first version packed the fields contiguously from bit 19. This controller then saw
+    /// connector number zero, answered Error with "non-existent connector number", and the spike
+    /// concluded it declined the command. It does not: with the number at bit 24 it lists every
+    /// mode, and the count matches bNumAltModes from GET_CAPABILITY.
     /// Recipient: 0 connector, 1 SOP (the attached partner), 2 SOP', 3 SOP''.
     /// </summary>
     public static ulong GetAlternateModes(byte recipient, byte connector, byte offset,
                                           byte numberMinusOne = 0)
         => CmdGetAlternateModes
          | ((ulong)(recipient & 0x07) << 16)
-         | ((ulong)(connector & 0x7F) << 19)
-         | ((ulong)offset << 26)
-         | ((ulong)(numberMinusOne & 0x03) << 34);
+         | ((ulong)(connector & 0x7F) << 24)
+         | ((ulong)offset << 32)
+         | ((ulong)(numberMinusOne & 0x03) << 40);
 
     /// <summary>
     /// CONTROL for GET_PDOS. Absolute bit offsets: ConnectorNumber 16-22, PartnerPdo 23,

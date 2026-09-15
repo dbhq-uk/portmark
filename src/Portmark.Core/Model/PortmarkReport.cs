@@ -32,6 +32,13 @@ public sealed class MachineReport
     public string? BiosVersion { get; init; }
     public string? OsVersion { get; init; }
     public string? OsDisplayVersion { get; init; }
+
+    /// <summary>
+    /// Battery charge as a percentage, null when there is no battery or Windows does not know.
+    /// Read only to tell a nearly full battery, which correctly draws very little, apart from one
+    /// that is not full and still is not gaining.
+    /// </summary>
+    public int? BatteryPercent { get; init; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -98,18 +105,64 @@ public sealed class ConnectorReport
     public bool? Connected { get; set; }
 
     public string? PartnerType { get; set; }
+
+    /// <summary>
+    /// The connector partner flags from GET_CONNECTOR_STATUS (bits 21-28), raw, and the one bit
+    /// that matters here: bit 1, set when the partner is operating in an alternate mode. This is
+    /// current operation, where the mode lists are only what is supported. Null when nothing is
+    /// attached or the status could not be read.
+    /// </summary>
+    public int? PartnerFlags { get; set; }
+    public bool? PartnerAlternateModeFlag { get; set; }
+
+    /// <summary>
+    /// The controller's own view of the charging rate, from bits 64 and 65 of the connector
+    /// status. This is the field Windows drives its slow-charging notification from. Microsoft
+    /// notes that firmware often leaves it at zero rather than meaning "not charging", so a zero
+    /// is reported as the controller's word and never taken as proof the battery is idle.
+    /// </summary>
+    public int? BatteryChargingStatusCode { get; set; }
+    public string? BatteryChargingStatus { get; set; }
     public string? PowerOperationMode { get; set; }
     public string? PowerDirection { get; set; }
     /// <summary>What the connector itself supports, as distinct from what is attached to it.</summary>
     public ConnectorCapabilityReport? Capability { get; set; }
 
     /// <summary>
-    /// Which alternate mode index is currently active, when the controller reports one. Knowing a
-    /// mode is active is not the same as knowing which: identifying it needs GET_ALTERNATE_MODES,
-    /// which some controllers advertise but decline.
+    /// The alternate modes this port itself can enter, from GET_ALTERNATE_MODES with the connector
+    /// as recipient. Null when the controller does not advertise alternate mode details, so the
+    /// question was never asked.
+    /// </summary>
+    public AlternateModeListReport? SupportedAlternateModes { get; set; }
+
+    /// <summary>
+    /// The alternate modes the attached partner offers (recipient SOP). Null when nothing is
+    /// attached, or when attachment could not be read, so the partner was never asked.
+    /// </summary>
+    public AlternateModeListReport? PartnerAlternateModes { get; set; }
+
+    /// <summary>
+    /// The offset of the mode in use, and only that: null unless <see cref="ActiveAlternateMode"/>
+    /// is set. The raw GET_CURRENT_CAM byte lives in <see cref="RawReport.CurrentCamHex"/>. This
+    /// controller returns 0 for an empty port, so that byte alone is not evidence of activity,
+    /// and the first release wrongly reported it as such.
     /// </summary>
     public int? ActiveAlternateModeIndex { get; set; }
     public int? SupportedAlternateModeBitmap { get; set; }
+
+    /// <summary>
+    /// The mode the controller names as current, when it names one. Read it with
+    /// <see cref="ActiveAlternateModeConfirmed"/>: on a controller that never describes the
+    /// attached partner, this is the controller's word and nothing else.
+    /// </summary>
+    public PortAlternateModeReport? ActiveAlternateMode { get; set; }
+
+    /// <summary>
+    /// True when something other than the controller's index agrees the mode is in use: either
+    /// the partner listed that mode, or the connector status says an alternate mode is in
+    /// operation. False means the mode above is unconfirmed, and it is printed as such.
+    /// </summary>
+    public bool ActiveAlternateModeConfirmed { get; set; }
     public string? AlternateModeNote { get; set; }
 
     public CableReport Cable { get; set; } = new();
@@ -136,6 +189,14 @@ public sealed class CableReport
 
     /// <summary>Why there is no data, when there is none.</summary>
     public string? Reason { get; set; }
+
+    /// <summary>
+    /// What the power contract implies about the cable when the cable itself cannot be read. Null
+    /// unless something can be concluded. Kept in its own object so it can never be mistaken for
+    /// a field the cable reported: everything above this line is the cable's own words, and
+    /// everything inside it is deduction from someone else's.
+    /// </summary>
+    public CableInferenceReport? Inferred { get; set; }
 
     public SpeedReport? Speed { get; set; }
     public int? CurrentCapabilityMilliamps { get; set; }
@@ -184,6 +245,15 @@ public sealed class PowerReport
 
     /// <summary>Highest power the attached supply offers, in milliwatts.</summary>
     public int? MaxAvailableMilliwatts { get; set; }
+
+    /// <summary>
+    /// True when this PC is drawing power and took less than half of what the supply offers. A
+    /// measurement, not a verdict: a nearly full battery draws little and that is correct.
+    /// </summary>
+    public bool IsUnderNegotiated { get; set; }
+
+    /// <summary>Plain English account of the gap, null when there is nothing to explain.</summary>
+    public string? PowerDiagnosis { get; set; }
 }
 
 public sealed class PowerObjectReport
@@ -230,6 +300,77 @@ public sealed class RawReport
     public string? ConnectorStatusCci { get; set; }
     public string? CablePropertyCci { get; set; }
     public string? PartnerSourcePdosHex { get; set; }
+    public string? CurrentCamHex { get; set; }
+    public string? CurrentCamCci { get; set; }
+
+    /// <summary>
+    /// Every GET_ALTERNATE_MODES request made for this connector, in order, recorded before any
+    /// interpretation. Failed requests are kept too: an empty list and a refused list must stay
+    /// distinguishable by anyone re-reading the bytes.
+    /// </summary>
+    public List<UcsiExchangeReport> AlternateModeExchanges { get; set; } = [];
+}
+
+/// <summary>
+/// What the power contract says about the cable. Not the cable's own words: a deduction from the
+/// supply's advertisement, stated with the evidence it rests on and the ambiguity it cannot
+/// resolve. This is the one place portmark concludes something it was not told directly, and it
+/// says so in every field.
+/// </summary>
+public sealed class CableInferenceReport
+{
+    /// <summary>The current the cable must be able to carry, in milliamps.</summary>
+    public int? MinimumCurrentRatingMilliamps { get; set; }
+
+    /// <summary>What was observed.</summary>
+    public string Evidence { get; set; } = "";
+
+    /// <summary>The rule that makes the observation mean something.</summary>
+    public string Basis { get; set; } = "";
+
+    /// <summary>What follows, and what does not.</summary>
+    public string Conclusion { get; set; } = "";
+}
+
+/// <summary>One UCSI request and its answer, exactly as exchanged.</summary>
+public sealed class UcsiExchangeReport
+{
+    public string Command { get; init; } = "";
+    public string ControlHex { get; init; } = "";
+    public string? Cci { get; init; }
+    public string? PayloadHex { get; init; }
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// One list of alternate modes as enumerated over UCSI. An empty <see cref="Modes"/> with
+/// <see cref="Complete"/> true is a real answer: the controller listed nothing. An empty list with
+/// <see cref="DataAvailable"/> false is not an answer, and <see cref="Reason"/> says what happened.
+/// A non-empty list with <see cref="Complete"/> false is a prefix: the controller stopped
+/// answering, or stopped moving, part way through.
+/// </summary>
+public sealed class AlternateModeListReport
+{
+    public bool DataAvailable { get; set; }
+    public bool Complete { get; set; }
+    public string? Reason { get; set; }
+    public List<PortAlternateModeReport> Modes { get; set; } = [];
+}
+
+/// <summary>
+/// One alternate mode as UCSI lists it: an SVID and the 32-bit "MID" the controller returned.
+/// UCSI calls the second field a mode ID; Linux treats it as the mode's Discover Modes VDO, and
+/// that is the only interoperable reading. It is kept raw. This controller returns 0x00000001 for
+/// Thunderbolt (the TBT mode bit) and 0x00000003 for DisplayPort (DFP_D and UFP_D capable, no
+/// pin assignments), which are abbreviated VDOs at best, so nothing is derived from them.
+/// </summary>
+public sealed class PortAlternateModeReport
+{
+    public int Offset { get; init; }
+    public string Svid { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string ModeId { get; init; } = "";
+    public bool IsDisplayPort { get; init; }
 }
 
 /// <summary>
