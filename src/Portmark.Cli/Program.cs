@@ -15,7 +15,9 @@ internal static class Program
     private const int ExitNeedsSetup = 2;
     private const int ExitUnsupported = 3;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal const string Version = "0.2.0";
+
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -36,11 +38,13 @@ internal static class Program
 
         if (args.Contains("--version"))
         {
-            Console.WriteLine("portmark 0.2.0");
+            Console.WriteLine($"portmark {Version}");
             return ExitOk;
         }
 
-        string? command = args.FirstOrDefault(a => !a.StartsWith('-'));
+        // The value after --out is a path, not a command, even though it does not start with '-'.
+        string? command = args.Where((a, i) => !a.StartsWith('-') && (i == 0 || args[i - 1] != "--out"))
+                              .FirstOrDefault();
         return command switch
         {
             "doctor" => Doctor(),
@@ -54,6 +58,7 @@ internal static class Program
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
+            "report" => HardwareReport.Run(args),
             null or "read" => Read(human: args.Contains("--human")),
             _ => Fail($"unknown command '{command}'. Try --help."),
         };
@@ -63,16 +68,19 @@ internal static class Program
     {
         PortmarkReport report = PortmarkReader.Read();
 
-        if (human) PrintHuman(report);
+        if (human) WriteHuman(report, Console.Out);
         else Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
 
-        return report.Capability.Status switch
-        {
-            CapabilityStatus.Ok => ExitOk,
-            CapabilityStatus.NeedsSetup => ExitNeedsSetup,
-            _ => ExitUnsupported,
-        };
+        return ExitCodeFor(report);
     }
+
+    /// <summary>The exit code a read ends with. Shared so 'report' exits exactly as a read would.</summary>
+    internal static int ExitCodeFor(PortmarkReport report) => report.Capability.Status switch
+    {
+        CapabilityStatus.Ok => ExitOk,
+        CapabilityStatus.NeedsSetup => ExitNeedsSetup,
+        _ => ExitUnsupported,
+    };
 
     /// <summary>
     /// Does a full read, then watches whether the device stays enumerable. Measures how much the
@@ -180,40 +188,44 @@ internal static class Program
         return ExitOk;
     }
 
-    private static void PrintHuman(PortmarkReport report)
+    /// <summary>
+    /// The --human rendering. Takes a writer rather than printing so 'report' can put the exact
+    /// same text in its file.
+    /// </summary>
+    internal static void WriteHuman(PortmarkReport report, TextWriter output)
     {
-        Console.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
-        Console.WriteLine();
+        output.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
+        output.WriteLine();
 
         // Billboard data needs no setup, so it is worth showing even when the UCSI path is not
         // available. Printing it only on the happy path threw away the one answer this machine
         // could give with no configuration at all.
-        PrintBillboards(report);
+        PrintBillboards(report, output);
 
         if (report.Capability.Status != CapabilityStatus.Ok)
         {
-            Console.WriteLine(Wrap(report.Capability.Explanation));
+            output.WriteLine(Wrap(report.Capability.Explanation));
             if (report.Capability.Remedy is not null)
             {
-                Console.WriteLine();
-                Console.WriteLine(Wrap(report.Capability.Remedy));
+                output.WriteLine();
+                output.WriteLine(Wrap(report.Capability.Remedy));
             }
             return;
         }
 
         if (report.Capability.Features is { CableDetailsAvailable: false })
         {
-            Console.WriteLine(Wrap(
+            output.WriteLine(Wrap(
                 "Note: this PC's port controller does not report cable information, so the cable "
               + "rows below will say so. Port and power details are unaffected. This is a firmware "
               + "limitation, not a property of your cables."));
-            Console.WriteLine();
+            output.WriteLine();
         }
 
         foreach (ConnectorReport connector in report.Connectors)
         {
-            Console.WriteLine($"Port {connector.Index}");
-            Console.WriteLine($"  {connector.Summary}");
+            output.WriteLine($"Port {connector.Index}");
+            output.WriteLine($"  {connector.Summary}");
 
             if (connector.Capability is { } cap)
             {
@@ -223,17 +235,17 @@ internal static class Program
                 if (cap.SupportsAlternateModes) supports.Add("alternate modes");
                 if (cap.SupportsDualRolePower) supports.Add("dual role power");
                 if (cap.SupportsAudioAccessory) supports.Add("audio accessory");
-                Console.WriteLine($"  Port supports {string.Join(", ", supports)}");
+                output.WriteLine($"  Port supports {string.Join(", ", supports)}");
             }
 
             if (connector.SupportedAlternateModes is { } modes)
-                Console.WriteLine(modes.DataAvailable && modes.Modes.Count > 0
+                output.WriteLine(modes.DataAvailable && modes.Modes.Count > 0
                     ? $"  Alt modes    {string.Join(", ", modes.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(modes.Complete ? "" : " (list incomplete)")}"
                     : $"  Alt modes    {(modes.DataAvailable ? "none listed" : "not listed by this controller")}");
             if (connector.PartnerAlternateModes is { DataAvailable: true, Modes.Count: > 0 } offered)
-                Console.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(offered.Complete ? "" : " (list incomplete)")}");
+                output.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(offered.Complete ? "" : " (list incomplete)")}");
             if (connector.ActiveAlternateMode is { } active)
-                Console.WriteLine($"  Current mode {ModeLabel(active.Name, active.Svid, active.VendorName)}"
+                output.WriteLine($"  Current mode {ModeLabel(active.Name, active.Svid, active.VendorName)}"
                                 + (connector.ActiveAlternateModeConfirmed
                                     ? ""
                                     : ", on the controller's word alone and not confirmed"));
@@ -242,51 +254,51 @@ internal static class Program
             if (power.DataAvailable)
             {
                 if (power.Negotiated is { } n)
-                    Console.WriteLine($"  Negotiated   {n.Display}");
+                    output.WriteLine($"  Negotiated   {n.Display}");
                 if (connector.BatteryChargingStatus is { } charging)
-                    Console.WriteLine($"  Charging     {charging}, according to the controller");
+                    output.WriteLine($"  Charging     {charging}, according to the controller");
                 if (power.PartnerSource.Count > 0)
                 {
-                    Console.WriteLine($"  Supply offers");
+                    output.WriteLine($"  Supply offers");
                     foreach (PowerObjectReport pdo in power.PartnerSource)
-                        Console.WriteLine($"    - {pdo.Display}");
+                        output.WriteLine($"    - {pdo.Display}");
                 }
                 if (power.LocalSource.Count > 0)
                 {
-                    Console.WriteLine($"  This PC offers");
+                    output.WriteLine($"  This PC offers");
                     foreach (PowerObjectReport pdo in power.LocalSource)
-                        Console.WriteLine($"    - {pdo.Display}");
+                        output.WriteLine($"    - {pdo.Display}");
                 }
                 if (power.PowerDiagnosis is not null)
                 {
-                    Console.WriteLine();
-                    Console.WriteLine("  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **");
-                    Console.WriteLine($"  {Wrap(power.PowerDiagnosis, 72).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+                    output.WriteLine();
+                    output.WriteLine("  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **");
+                    output.WriteLine($"  {Wrap(power.PowerDiagnosis, 72).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
                 }
             }
 
             CableReport cable = connector.Cable;
             if (cable.DataAvailable)
             {
-                Console.WriteLine($"  Speed        {cable.Speed?.Display ?? "not reported by the cable"}");
-                Console.WriteLine($"  Power        {DescribeCurrent(cable)}");
-                Console.WriteLine($"  Plug         {cable.PlugType ?? "unknown"}");
-                Console.WriteLine($"  Construction {(cable.ActiveCable == true ? "active" : "passive")}");
-                Console.WriteLine($"  Video        {cable.VideoNote}");
+                output.WriteLine($"  Speed        {cable.Speed?.Display ?? "not reported by the cable"}");
+                output.WriteLine($"  Power        {DescribeCurrent(cable)}");
+                output.WriteLine($"  Plug         {cable.PlugType ?? "unknown"}");
+                output.WriteLine($"  Construction {(cable.ActiveCable == true ? "active" : "passive")}");
+                output.WriteLine($"  Video        {cable.VideoNote}");
             }
             else if (cable.Reason is not null)
             {
-                Console.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                output.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
             if (cable.Inferred is { } inferred)
             {
-                Console.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.##}A, deduced not reported");
+                output.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.##}A, deduced not reported");
                 string deduction = $"{inferred.Evidence} {inferred.Basis} {inferred.Conclusion}";
-                Console.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                output.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
-            Console.WriteLine();
+            output.WriteLine();
         }
     }
 
@@ -480,19 +492,19 @@ internal static class Program
         return ExitOk;
     }
 
-    private static void PrintBillboards(PortmarkReport report)
+    private static void PrintBillboards(PortmarkReport report, TextWriter output)
     {
         foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
         {
-            Console.WriteLine($"Adapter {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
+            output.WriteLine($"Adapter {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  {ModeLabel(m.Name, m.Svid, m.VendorName)}: {m.State}");
-            Console.WriteLine(b.CarriesVideo
+                output.WriteLine($"  {ModeLabel(m.Name, m.Svid, m.VendorName)}: {m.State}");
+            output.WriteLine(b.CarriesVideo
                 ? "  Video        yes, DisplayPort is active through this adapter"
                 : b.SupportsVideo
                     ? "  Video        supported but not currently active"
                     : "  Video        this adapter offers no DisplayPort mode");
-            Console.WriteLine();
+            output.WriteLine();
         }
     }
 
@@ -602,7 +614,7 @@ internal static class Program
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    private static int Fail(string message)
+    internal static int Fail(string message)
     {
         Console.Error.WriteLine($"portmark: {message}");
         return ExitError;
@@ -636,11 +648,14 @@ internal static class Program
             USAGE
               portmark                 read all ports, print JSON
               portmark --human         read all ports, print plain English
+              portmark report          read all ports, write one file to attach to a hardware report
               portmark enable          switch on the port controller interface (needs admin, once)
               portmark disable         switch it back off (needs admin)
 
             OPTIONS
               --human                  human-readable output instead of JSON
+              --out PATH               where 'report' writes (default portmark-report-<time>.json here)
+              --no-redact              keep serial numbers, device paths and names in the report
               --version                print the version
               --help                   this text
 
@@ -649,6 +664,8 @@ internal static class Program
               1  an error occurred
               2  a one-time setup step is needed; run 'portmark enable' as administrator
               3  this PC cannot report cable data
+              'report' writes its file whichever of 0, 2 or 3 the reading gives, then exits with
+              that code. It exits 1 only when the file could not be written.
 
             NOTES
               Fields that the hardware did not report are null in JSON, and say so in --human
@@ -659,6 +676,9 @@ internal static class Program
               made the device.
 
               portmark only ever reads. It never sends a command that changes port state.
+
+              'report' only writes a file. It sends nothing and opens nothing; sharing the file
+              is up to you.
             """);
     }
 }

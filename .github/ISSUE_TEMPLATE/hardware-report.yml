@@ -9,8 +9,13 @@ body:
         This is the most useful thing you can contribute.
 
         Whether a port controller reports cable details is **not documented anywhere**, and the
-        only way to find out how common it is, is to collect it. Portmark reads nothing about you
-        and sends nothing anywhere; you are pasting this yourself and can edit it first.
+        only way to find out how common it is, is to collect it. portmark reads nothing about you
+        and sends nothing anywhere; you are attaching this yourself and can check it first.
+
+        The easiest way is `portmark report`. It writes one `.json` file with the full reading,
+        including the raw bytes, the `--human` text, and your PC's make, model, BIOS and Windows
+        version. Serial numbers, your user name, your PC's name and file paths are replaced with
+        placeholders by default, and the file lists what was replaced.
 
   - type: input
     id: machine
@@ -21,13 +26,23 @@ body:
       required: true
 
   - type: textarea
+    id: report
+    attributes:
+      label: Report file from `portmark report`
+      description: >-
+        Run `portmark report` in a terminal, then drag the `.json` file it writes into this box.
+        Open it first if you want to see exactly what you are sharing. Leave this empty if you are
+        pasting `--human` output below instead.
+      placeholder: Drag portmark-report-*.json here.
+
+  - type: textarea
     id: output
     attributes:
       label: Output of `portmark --human`
-      description: Run it in a terminal and paste the whole thing. Redact anything you would rather not share.
+      description: >-
+        Not needed if you attached a report file, which already contains it. Otherwise run it in a
+        terminal and paste the whole thing. Redact anything you would rather not share.
       render: text
-    validations:
-      required: true
 
   - type: dropdown
     id: cable-details
