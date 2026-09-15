@@ -65,7 +65,9 @@ public partial class PopoverWindow : Window
             bool stale = DateTime.UtcNow - _lastUcsiRead > TimeSpan.FromSeconds(10);
             if (_report is null || stale || forceUcsi)
             {
-                _report = PortmarkReader.Read();
+                // The panel shows no identity, and this refresh also runs on power and device
+                // events, so it never sends identity requests to the port controller.
+                _report = PortmarkReader.Read(requestIdentity: false);
                 _lastUcsiRead = DateTime.UtcNow;
             }
         }
