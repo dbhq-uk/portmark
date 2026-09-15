@@ -574,7 +574,9 @@ public sealed class BillboardReport
     public string? VendorName => VendorNames.Find(VendorId);
 
     public string ProductId { get; init; } = "";
-    public int PreferredModeIndex { get; init; }
+
+    /// <summary>bPreferredAlternateOrUSB4Mode. Null when the descriptor was cut short before it.</summary>
+    public int? PreferredModeIndex { get; init; }
     public List<AlternateModeReport> Modes { get; init; } = [];
 
     /// <summary>True when a DisplayPort alternate mode is present and was entered successfully.</summary>
@@ -582,6 +584,16 @@ public sealed class BillboardReport
 
     /// <summary>True when DisplayPort is offered at all, whether or not it was entered.</summary>
     public bool SupportsVideo { get; set; }
+
+    /// <summary>
+    /// True when the capability descriptor ended before the modes it declares, so
+    /// <see cref="Modes"/> is a prefix. While true, false for <see cref="SupportsVideo"/> and
+    /// <see cref="CarriesVideo"/> means only that DisplayPort was not in the part that was read.
+    /// </summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>What was declared and what could be read, when <see cref="Truncated"/>.</summary>
+    public string? TruncationNote { get; set; }
 }
 
 public sealed class AlternateModeReport
@@ -638,24 +650,42 @@ public sealed class UsbDeviceReport
     public string HubPath { get; init; } = "";
 
     /// <summary>
-    /// True when the device negotiated a slower link than its own declared USB version allows.
-    /// The usual cause is a USB 2.0 cable or hub in the chain, and nothing else on the system
-    /// tells you this is happening.
+    /// True when the device negotiated a slower link than the evidence in <see cref="LinkEvidence"/>
+    /// says it is capable of. Never set from the declared USB version, which is specification
+    /// conformance rather than speed: a full-speed-only USB 2.0 mouse is not underperforming.
     /// </summary>
     public bool IsUnderperforming { get; set; }
 
-    /// <summary>Plain English explanation of the shortfall, null when running at full capability.</summary>
+    /// <summary>Plain English explanation of the shortfall, null when nothing shows one.</summary>
     public string? LinkDiagnosis { get; set; }
 
-    /// <summary>The speed the declared USB version allows, for comparison with <see cref="Speed"/>.</summary>
+    /// <summary>
+    /// The speed the capability evidence says the device can reach, for comparison with
+    /// <see cref="Speed"/>. Null unless <see cref="IsUnderperforming"/>.
+    /// </summary>
     public string? ExpectedSpeed { get; set; }
+
+    /// <summary>
+    /// What the diagnosis rests on: the hub's report of the port's protocols and the device's
+    /// SuperSpeed capability, and the device's own BOS speed capabilities, raw and decoded.
+    /// </summary>
+    public UsbLinkEvidenceReport? LinkEvidence { get; set; }
 }
 
 /// <summary>One node in the USB device tree: a hub, or a device attached to one.</summary>
 public sealed class UsbTreeNode
 {
-    /// <summary>The device this node represents. Null for a host controller's root hub.</summary>
+    /// <summary>
+    /// The device this node represents. Null for a host controller's root hub, and for a port
+    /// listed only for its <see cref="PortStatus"/>.
+    /// </summary>
     public UsbDeviceReport? Device { get; set; }
+
+    /// <summary>
+    /// Set for a port whose hub reports a status other than empty or connected, such as a failed
+    /// enumeration. Such a port has no working device, so this is all there is to show.
+    /// </summary>
+    public UsbPortStatusReport? PortStatus { get; set; }
 
     public string Label { get; set; } = "";
     public bool IsRootHub { get; set; }
@@ -906,4 +936,93 @@ public sealed class VconnPoweredDeviceVdoReport
     public int? GroundImpedanceMilliohms { get; set; }
     public string? Note { get; set; }
     public string Raw { get; set; } = "";
+}
+
+/// <summary>
+/// Everything one hub scan found: the attached devices, and the ports whose hub reports a status
+/// other than empty or connected.
+/// </summary>
+public sealed class UsbScanReport
+{
+    public List<UsbDeviceReport> Devices { get; init; } = [];
+
+    /// <summary>
+    /// Ports that are neither empty nor connected: failed connections, and connections still
+    /// enumerating or resetting. Empty ports are left out, and connected ones are in
+    /// <see cref="Devices"/>.
+    /// </summary>
+    public List<UsbPortStatusReport> PortStatuses { get; init; } = [];
+}
+
+/// <summary>
+/// One hub port's USB_CONNECTION_STATUS, as the hub reports it. Every statement here is the hub's,
+/// and none says what caused the status.
+/// </summary>
+public sealed class UsbPortStatusReport
+{
+    public string HubPath { get; init; } = "";
+    public int Port { get; init; }
+
+    /// <summary>The USB_CONNECTION_STATUS value, and its name in usbioctl.h.</summary>
+    public int ConnectionStatusCode { get; init; }
+    public string ConnectionStatus { get; init; } = "";
+
+    /// <summary>True for the statuses Microsoft documents as a failed connection attempt.</summary>
+    public bool IsFault { get; init; }
+
+    /// <summary>Plain English, attributed to the hub.</summary>
+    public string Description { get; init; } = "";
+
+    /// <summary>
+    /// From the device descriptor the hub returned with the status, when it returned a valid one.
+    /// Null when it did not, which after a failed enumeration is common.
+    /// </summary>
+    public string? VendorId { get; init; }
+    public string? ProductId { get; init; }
+
+    /// <summary>The fixed part of USB_NODE_CONNECTION_INFORMATION_EX, so the decoding can be checked.</summary>
+    public string ConnectionInformationHex { get; init; } = "";
+}
+
+/// <summary>
+/// The readings a link diagnosis rests on. The hub's half comes from
+/// IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX_V2, the device's half from its BOS descriptor. Each
+/// half is null when it could not be read, with a reason.
+/// </summary>
+public sealed class UsbLinkEvidenceReport
+{
+    /// <summary>USB_PROTOCOLS as returned, and decoded.</summary>
+    public string? SupportedUsbProtocolsHex { get; init; }
+    public string? PortProtocols { get; init; }
+    public bool? PortSupportsUsb110 { get; init; }
+    public bool? PortSupportsUsb200 { get; init; }
+    public bool? PortSupportsUsb300 { get; init; }
+
+    /// <summary>USB_NODE_CONNECTION_INFORMATION_EX_V2_FLAGS as returned, and decoded.</summary>
+    public string? FlagsHex { get; init; }
+    public bool? OperatingAtSuperSpeedOrHigher { get; init; }
+    public bool? SuperSpeedCapableOrHigher { get; init; }
+    public bool? OperatingAtSuperSpeedPlusOrHigher { get; init; }
+    public bool? SuperSpeedPlusCapableOrHigher { get; init; }
+
+    /// <summary>
+    /// The port sharing this port's physical connector, from USB_PORT_CONNECTOR_PROPERTIES: 0 when
+    /// the hub reports none, null when it could not be read. An xHCI root hub numbers the USB 2 and
+    /// USB 3 halves of one connector separately, so this is what says whether the socket supports
+    /// USB 3 when this port number does not.
+    /// </summary>
+    public int? CompanionPortNumber { get; init; }
+    public string? CompanionSupportedUsbProtocolsHex { get; init; }
+    public string? CompanionPortProtocols { get; init; }
+
+    /// <summary>Why the hub's half is missing, when it is.</summary>
+    public string? HubReportReason { get; init; }
+
+    /// <summary>wSpeedsSupported from the SuperSpeed USB Device Capability, and both capabilities' bytes.</summary>
+    public string? BosSpeedsSupportedHex { get; init; }
+    public string? BosSuperSpeedCapabilityHex { get; init; }
+    public string? BosSuperSpeedPlusCapabilityHex { get; init; }
+
+    /// <summary>Why the device's half is missing, when it is.</summary>
+    public string? BosReason { get; init; }
 }
