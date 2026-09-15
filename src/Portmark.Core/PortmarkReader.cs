@@ -238,19 +238,21 @@ public static class PortmarkReader
     {
         var power = new PowerReport();
 
-        UcsiResult partnerSource = connection.Execute(
-            UcsiProtocol.CmdGetPdos, UcsiProtocol.GetPdos(index, partner: true, 0, 3, source: true));
-        if (partnerSource.Ok && partnerSource.Payload.Length >= 4)
-            power.PartnerSource = PowerDataObject.DecodeAll(partnerSource.Payload);
+        PowerDataObject.SourceList partnerSource = ReadSourceList(connection, index, report, partner: true);
+        power.PartnerSource = partnerSource.Objects;
 
-        UcsiResult localSource = connection.Execute(
-            UcsiProtocol.CmdGetPdos, UcsiProtocol.GetPdos(index, partner: false, 0, 3, source: true));
-        if (localSource.Ok && localSource.Payload.Length >= 4)
-            power.LocalSource = PowerDataObject.DecodeAll(localSource.Payload);
+        PowerDataObject.SourceList localSource = ReadSourceList(connection, index, report, partner: false);
+        power.LocalSource = localSource.Objects;
 
-        report.Raw.PartnerSourcePdosHex = partnerSource.Ok && partnerSource.Payload.Length > 0
-            ? Convert.ToHexString(partnerSource.Payload)
-            : null;
+        // Every page that was accepted, in order, so decoding this hex again gives the same
+        // positions. Each individual answer, refused ones included, is in PdoExchanges. When no
+        // page was accepted the first answer's bytes are still kept here, as they always were: an
+        // all-zero list from a charger port that is powering a dock is itself worth seeing.
+        string? firstPartnerPage = report.Raw.PdoExchanges
+            .FirstOrDefault(e => e.Command.StartsWith("GET_PDOS partner", StringComparison.Ordinal))?.PayloadHex;
+        report.Raw.PartnerSourcePdosHex = partnerSource.Bytes.Length > 0
+            ? Convert.ToHexString(partnerSource.Bytes)
+            : string.IsNullOrEmpty(firstPartnerPage) ? null : firstPartnerPage;
 
         if (report.Raw.ConnectorStatusHex is not null && report.Connected == true)
         {
@@ -258,13 +260,11 @@ public static class PortmarkReader
             if (status.Length >= 8)
             {
                 uint rdo = BitConverter.ToUInt32(status, 4);
-                power.Negotiated = PowerDataObject.DecodeRequest(rdo, power.PartnerSource);
+                power.Negotiated = PowerDataObject.DecodeRequest(rdo, SourceSideObjects(power, report.PowerDirection));
             }
         }
 
-        // Only count objects we actually understood.
-        List<PowerObjectReport> usable = power.PartnerSource.Where(p => p.Kind != "unrecognised").ToList();
-        power.MaxAvailableMilliwatts = usable.Count > 0 ? usable.Max(p => p.MaxPowerMilliwatts ?? 0) : null;
+        power.MaxAvailableMilliwatts = PowerDataObject.OfferCeilingMilliwatts(power.PartnerSource);
 
         power.DataAvailable = power.PartnerSource.Count > 0 || power.LocalSource.Count > 0;
         if (!power.DataAvailable)
@@ -317,6 +317,40 @@ public static class PortmarkReader
         return CableProperty.Decode([], reason);
     }
 
+    /// <summary>One side's source list, with every GET_PDOS exchange recorded before it is decoded.</summary>
+    private static PowerDataObject.SourceList ReadSourceList(UcsiConnection connection, byte index,
+                                                             ConnectorReport report, bool partner)
+        => PowerDataObject.ReadSourceList((offset, numberMinusOne) =>
+        {
+            ulong control = UcsiProtocol.GetPdos(index, partner, offset, numberMinusOne, source: true);
+            UcsiResult r = connection.Execute(UcsiProtocol.CmdGetPdos, control);
+            report.Raw.PdoExchanges.Add(new UcsiExchangeReport
+            {
+                Command = $"GET_PDOS {(partner ? "partner" : "local")} source offset={offset} count={numberMinusOne + 1}",
+                ControlHex = $"0x{control:X12}",
+                Cci = r.Ok ? $"0x{r.Cci:X8}" : null,
+                PayloadHex = r.Ok ? Convert.ToHexString(r.Payload) : null,
+                Error = r.Error,
+            });
+            return r;
+        });
+
+    /// <summary>
+    /// The list a Request Data Object's position counts into, which is the source's. When this PC
+    /// supplies, the attached device asked this PC; when it consumes, it asked the attached supply.
+    /// The first version always used the partner's list, so on a port this PC was powering it named
+    /// an object the request never selected. With the direction unknown neither list can be chosen.
+    ///
+    /// This PC's list is GET_PDOS "current supported source capabilities", which UCSI does not
+    /// promise is byte-for-byte what was advertised on this connector.
+    /// </summary>
+    public static List<PowerObjectReport> SourceSideObjects(PowerReport power, string? direction) => direction switch
+    {
+        "supplying" => power.LocalSource,
+        "consuming" => power.PartnerSource,
+        _ => [],
+    };
+
     /// <summary>The plain English one-liner, stating only what was actually reported.</summary>
     public static string Summarise(ConnectorReport report)
     {
@@ -332,11 +366,25 @@ public static class PortmarkReader
         string attached = parts.Count > 0 ? string.Join(", ", parts) : "Something attached";
 
         // Power is the most useful thing we can say, and is available on controllers that cannot
-        // report cable data at all.
-        if (report.Power.DataAvailable && report.Power.MaxAvailableMilliwatts is int mw && mw > 0)
+        // report cable data at all. Which side is the source decides the words: while this PC
+        // supplies, the attached device is not "the supply" and nothing is being drawn from it,
+        // which is what the first version said on a port powering a dock.
+        if (report.PowerDirection == "supplying")
+        {
+            if (report.Power.DataAvailable
+                && PowerDataObject.OfferCeilingMilliwatts(report.Power.LocalSource) is int localMw && localMw > 0)
+            {
+                string supplied = report.Power.Negotiated is { SelectedKind: not null } n
+                    ? $" and is supplying {n.Display}"
+                    : "";
+                parts.Add($"this PC offers up to {localMw / 1000.0:0.#}W{supplied}");
+                attached = string.Join(", ", parts);
+            }
+        }
+        else if (report.Power.DataAvailable && report.Power.MaxAvailableMilliwatts is int mw && mw > 0)
         {
             string offered = $"supply offers up to {mw / 1000.0:0.#}W";
-            string negotiated = report.Power.Negotiated is { } n ? $", drawing {n.Display}" : "";
+            string negotiated = report.Power.Negotiated is { SelectedKind: not null } n ? $", drawing {n.Display}" : "";
             parts.Add(offered + negotiated);
             attached = string.Join(", ", parts);
         }

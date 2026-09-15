@@ -192,7 +192,7 @@ Cable data being unavailable does not mean nothing is. Measured on the ThinkPad 
 | `GET_CAPABILITY` | Works. 2 connectors, PD 2.0, Type-C 1.0, BC 1.2, 3 alternate modes. |
 | `GET_CONNECTOR_CAPABILITY` | Works. USB 2.0, USB 3.x, alternate modes, dual role power, provider and consumer. |
 | `GET_CONNECTOR_STATUS` | Works. Attachment, partner type, power direction, power operation mode, and the RDO. |
-| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A - exactly the 65W charger plugged in. |
+| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A - exactly the 65W charger plugged in. One call returns at most four objects, so portmark reads offset 4 for objects five to seven when the first page is full. With the 100W charger's four objects on connector 1, that second read (CONTROL `0x000604810010`) answers CCI `0x80000000`: completed, zero length, no error. |
 | `GET_CAM_SUPPORTED` / `GET_CURRENT_CAM` | Work. `GET_CAM_SUPPORTED` returns `0x03`. `GET_CURRENT_CAM` returns `0` on both connectors, including the empty one, so on its own it does not say a mode is active. |
 | `GET_ALTERNATE_MODES` | **Works.** The spike first reported it declined; that was portmark's own encoding error. See below. |
 | `GET_CABLE_PROPERTY` | Not advertised, and answered with the **Not Supported** indicator (CCI `0x82000000`), exactly as an undefined opcode is. See below. |
@@ -291,7 +291,7 @@ That reshapes the product into two tiers:
 | Tier | Needs | Gives |
 |---|---|---|
 | **Zero setup** | nothing | Alternate modes by SVID, and whether DisplayPort is active. Works for every user on first run. |
-| **One-time admin** | `TestInterfaceEnabled` | Port state, partner, power direction, the negotiated PD contract, the supply's full PDO list, and cable e-marker data *where the controller supports it*. |
+| **One-time admin** | `TestInterfaceEnabled` | Port state, partner, power direction, the negotiated PD contract, the source power objects `GET_PDOS` reports for each side (up to the seven SPR objects; EPR objects from position 8 are not requested, because UCSI's offset and count stop at 7), and cable e-marker data *where the controller supports it*. |
 
 The first tier is the better first-run experience by a distance, and it is the answer to the "no
 video" half of the headline claim. It also means a machine that cannot do UCSI at all is not a

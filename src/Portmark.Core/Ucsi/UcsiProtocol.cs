@@ -118,7 +118,14 @@ public static class UcsiProtocol
 
     /// <summary>
     /// CONTROL for GET_PDOS. Absolute bit offsets: ConnectorNumber 16-22, PartnerPdo 23,
-    /// PdoOffset 24-31, NumberOfPdos 32-33, SourceOrSinkPdos 34, SourceCapabilitiesType 35-36.
+    /// PdoOffset 24-31, NumberOfPdos 32-33, SourceOrSinkPdos 34, SourceCapabilitiesType 35-36
+    /// (UCSI 1.2 Table 4-34). NumberOfPdos is the count minus one, and the PPM answers Error when
+    /// the offset plus that field exceeds 7.
+    ///
+    /// portmark only ever sends SourceCapabilitiesType 0, current supported source capabilities.
+    /// UCSI 1.2 defines the field only for this PC's own source list, so it must be zero for the
+    /// partner's, and zero is the one value that asks nothing of a PPM older than the field.
+    /// On this UCSI 1.0 controller types 0 to 2 answer identically and type 3 answers Error.
     /// </summary>
     public static ulong GetPdos(byte connector, bool partner, byte offset,
                                 byte numberMinusOne, bool source, byte sourceCapabilitiesType = 0)

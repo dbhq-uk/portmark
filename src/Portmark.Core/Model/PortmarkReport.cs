@@ -270,15 +270,58 @@ public sealed class PowerObjectReport
     public bool? DualRolePower { get; init; }
     public string Display { get; init; } = "";
     public string Raw { get; init; } = "";
+
+    /// <summary>
+    /// The object's position in the source's list, counting from one, as a Request names it.
+    /// Kept because empty slots are not listed, so the index in this list is not the position.
+    /// </summary>
+    public int? Position { get; init; }
+
+    /// <summary>PPS only: the PPS Power Limited bit, B27. Null for every other kind.</summary>
+    public bool? PowerLimited { get; init; }
+
+    /// <summary>Adjustable (AVS) only: true for EPR AVS, false for SPR AVS.</summary>
+    public bool? ExtendedPowerRange { get; init; }
+
+    /// <summary>SPR AVS only: the 15-20V current. Null when the object offers nothing above 15V.</summary>
+    public int? MaxCurrent15To20VoltsMilliamps { get; init; }
+
+    /// <summary>EPR AVS only: the PDP the object states, in milliwatts.</summary>
+    public int? PdpMilliwatts { get; init; }
 }
 
+/// <summary>
+/// A decoded Request Data Object. Which fields are set depends on the kind of object the request
+/// selects; a field the layout does not carry is null, and when the selected object was not read
+/// every layout-dependent field is null.
+/// </summary>
 public sealed class RequestReport
 {
     public int ObjectPosition { get; init; }
-    public int OperatingCurrentMilliamps { get; init; }
-    public int MaxOperatingCurrentMilliamps { get; init; }
+    public int? OperatingCurrentMilliamps { get; init; }
+    public int? MaxOperatingCurrentMilliamps { get; init; }
     public int? SelectedVoltageMillivolts { get; init; }
     public int? NegotiatedPowerMilliwatts { get; init; }
+
+    /// <summary>The kind of the selected object, or null when it was not read or not recognised.</summary>
+    public string? SelectedKind { get; init; }
+
+    /// <summary>Fixed and variable with GiveBack set: the minimum operating current.</summary>
+    public int? MinOperatingCurrentMilliamps { get; init; }
+
+    /// <summary>Battery only: operating, maximum and (with GiveBack) minimum power.</summary>
+    public int? OperatingPowerMilliwatts { get; init; }
+    public int? MaxOperatingPowerMilliwatts { get; init; }
+    public int? MinOperatingPowerMilliwatts { get; init; }
+
+    /// <summary>PPS and AVS only: the output voltage the sink asked for.</summary>
+    public int? OutputVoltageMillivolts { get; init; }
+
+    /// <summary>Fixed, variable and battery only: B27. Reserved, so null, in PPS and AVS requests.</summary>
+    public bool? GiveBack { get; init; }
+
+    /// <summary>B26: the sink says the offer does not meet its needs.</summary>
+    public bool CapabilityMismatch { get; init; }
     public string Display { get; init; } = "";
     public string Raw { get; init; } = "";
 }
@@ -310,6 +353,12 @@ public sealed class RawReport
     /// distinguishable by anyone re-reading the bytes.
     /// </summary>
     public List<UcsiExchangeReport> AlternateModeExchanges { get; set; } = [];
+
+    /// <summary>
+    /// Every GET_PDOS request made for this connector, in order, including a second page that was
+    /// refused or empty, so where a list stopped can be checked.
+    /// </summary>
+    public List<UcsiExchangeReport> PdoExchanges { get; set; } = [];
 }
 
 /// <summary>
