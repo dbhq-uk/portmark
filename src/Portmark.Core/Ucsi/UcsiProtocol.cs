@@ -46,6 +46,23 @@ public static class UcsiProtocol
     public const byte CmdGetConnectorStatus = 0x12;
     public const byte CmdGetErrorStatus = 0x13;
 
+    /// <summary>
+    /// GET_PD_MESSAGE, UCSI 1.2 and 2.0 section 4.5.20, code 0x15 (Table A-1; Linux
+    /// UCSI_GET_PD_MESSAGE). It changes no port state, which is why it belongs in this list, but
+    /// with Message Offset 0 it makes the controller send a PD request to the partner or cable, so
+    /// it is gated by <see cref="PdMessage.WhyNotAsk"/> rather than sent wherever it might work.
+    /// </summary>
+    public const byte CmdGetPdMessage = 0x15;
+
+    // GET_PD_MESSAGE Recipient, bits 23-25: 0 connector, 1 SOP, 2 SOP', 3 SOP'', 4-7 reserved.
+    public const byte PdMessageRecipientSop = 1;
+    public const byte PdMessageRecipientSopPrime = 2;
+
+    // GET_PD_MESSAGE Response Message Type, bits 42-47: 0 Sink_Capabilities_Extended, 1
+    // Source_Capabilities_Extended, 2 Battery_Capabilities, 3 Battery_Status, 4 "Discover Identity
+    // Response - ACK, NAK or BUSY (Structured VDM)", 5-63 reserved in UCSI 2.0.
+    public const byte PdMessageDiscoverIdentity = 4;
+
     // CCI indicator bits, per UCSI Table 4-2 and Microsoft's UCSI_CCI: bits 1-7 connector change,
     // 8-15 data length, then from bit 25 upward Not Supported, Cancel Completed, Reset Completed,
     // Busy, Acknowledge Command, Error, Command Completed.
@@ -93,6 +110,7 @@ public static class UcsiProtocol
         CmdGetCableProperty => "GET_CABLE_PROPERTY",
         CmdGetConnectorStatus => "GET_CONNECTOR_STATUS",
         CmdGetErrorStatus => "GET_ERROR_STATUS",
+        CmdGetPdMessage => "GET_PD_MESSAGE",
         _ => $"0x{command:X2}",
     };
 
@@ -136,6 +154,23 @@ public static class UcsiProtocol
          | ((ulong)(numberMinusOne & 0x03) << 32)
          | ((source ? 1UL : 0UL) << 34)
          | ((ulong)(sourceCapabilitiesType & 0x03) << 35);
+
+    /// <summary>
+    /// CONTROL for GET_PD_MESSAGE, UCSI 1.2 Table 4-50 and UCSI 2.0 Table 4-51. Absolute bit offsets:
+    /// ConnectorNumber 16-22, Recipient 23-25, MessageOffset 26-33, NumberOfBytes 34-41,
+    /// ResponseMessageType 42-47, reserved 48-63. Linux shifts by the same 23, 26, 34 and 42.
+    ///
+    /// Data Length stays zero. Number of Bytes must not exceed MAX_DATA_LENGTH, 16 here, and for a
+    /// Structured VDM both it and the offset go in fours.
+    /// </summary>
+    public static ulong GetPdMessage(byte connector, byte recipient, byte offset, byte numberOfBytes,
+                                     byte responseMessageType)
+        => CmdGetPdMessage
+         | ((ulong)(connector & 0x7F) << 16)
+         | ((ulong)(recipient & 0x07) << 23)
+         | ((ulong)offset << 26)
+         | ((ulong)numberOfBytes << 34)
+         | ((ulong)(responseMessageType & 0x3F) << 42);
 
     /// <summary>Formats the BCD version the PPM reports, e.g. 0x0100 becomes "1.0".</summary>
     public static string FormatVersion(ushort bcd)

@@ -163,6 +163,13 @@ public sealed class CapabilityReport
     public bool TestInterfaceEnabled { get; set; }
     public bool TestInterfacePublished { get; set; }
     public string? UcsiVersion { get; set; }
+
+    /// <summary>
+    /// The VERSION register as read, for decisions that depend on it. Not serialised: the formatted
+    /// <see cref="UcsiVersion"/> already carries it, and the schema is unchanged.
+    /// </summary>
+    [JsonIgnore]
+    public ushort? UcsiVersionBcd { get; set; }
     public int? ConnectorCount { get; set; }
 
     /// <summary>
@@ -178,6 +185,13 @@ public sealed class PpmFeatureReport
     public bool CableDetailsAvailable { get; init; }
     public bool AlternateModeDetailsAvailable { get; init; }
     public bool PowerDataObjectDetailsAvailable { get; init; }
+
+    /// <summary>
+    /// bmOptionalFeatures bit 8, defined from UCSI 1.2. Clear means the controller will answer
+    /// GET_PD_MESSAGE with Not Supported, so the attached device and cable cannot be asked for
+    /// their Discover Identity through it.
+    /// </summary>
+    public bool GetPdMessageSupported { get; init; }
     public bool SupportsUsbPowerDelivery { get; init; }
     public bool SupportsBatteryCharging { get; init; }
     public int AlternateModeCount { get; init; }
@@ -258,6 +272,12 @@ public sealed class ConnectorReport
     public CableReport Cable { get; set; } = new();
 
     /// <summary>
+    /// What the attached device and cable declare through Discover Identity. Null only when the
+    /// connector was never read; otherwise it says whether the question was asked and why not.
+    /// </summary>
+    public IdentityReport? Identity { get; set; }
+
+    /// <summary>
     /// What the attached supply offers and what was actually negotiated. Available on controllers
     /// that advertise PDO details, independently of whether cable details are available.
     /// </summary>
@@ -294,7 +314,19 @@ public sealed class CableReport
     public string? PlugType { get; set; }
     public bool? ActiveCable { get; set; }
     public bool? VbusInCable { get; set; }
+
+    /// <summary>
+    /// UCSI Directionality, byte 3 bit 2: true when the cable's lane directionality is
+    /// configurable, false when it is fixed in the cable.
+    /// </summary>
+    public bool? LaneDirectionalityConfigurable { get; set; }
+
+    /// <summary>
+    /// UCSI Mode Support. Only valid for an active cable, so it is null for a passive one, with
+    /// <see cref="AlternateModeSupportNote"/> saying why.
+    /// </summary>
     public bool? SupportsAlternateModes { get; set; }
+    public string? AlternateModeSupportNote { get; set; }
     public int? LatencyCode { get; set; }
 
     /// <summary>
@@ -448,6 +480,13 @@ public sealed class RawReport
     /// refused or empty, so where a list stopped can be checked.
     /// </summary>
     public List<UcsiExchangeReport> PdoExchanges { get; set; } = [];
+
+    /// <summary>
+    /// Every GET_PD_MESSAGE request made for this connector, in order, recorded before any
+    /// interpretation. Empty when the controller does not offer the command, because then it is
+    /// never sent, and <see cref="IdentityReport.Reason"/> says so.
+    /// </summary>
+    public List<UcsiExchangeReport> PdMessageExchanges { get; set; } = [];
 }
 
 /// <summary>
@@ -662,4 +701,209 @@ public sealed class HubPowerReport
     public bool OverSubscribed { get; init; }
 
     public string? Note { get; init; }
+}
+
+/// <summary>
+/// What the attached device and the cable say about themselves through USB PD Discover Identity,
+/// read with UCSI GET_PD_MESSAGE. Everything under here is a declaration by the device or cable,
+/// passed on, and never a measurement.
+/// </summary>
+public sealed class IdentityReport
+{
+    /// <summary>
+    /// Whether GET_PD_MESSAGE was sent. False is the usual answer: it is only sent when the
+    /// controller reports UCSI 1.2 or later, advertises the command, and something is attached.
+    /// </summary>
+    public bool Requested { get; set; }
+
+    /// <summary>Why the question was not asked, when it was not.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>The Discover Identity response from the attached device (SOP).</summary>
+    public DiscoverIdentityReport? Partner { get; set; }
+
+    /// <summary>The Discover Identity response from the cable plug (SOP').</summary>
+    public DiscoverIdentityReport? Cable { get; set; }
+}
+
+/// <summary>
+/// One Discover Identity response. <see cref="ObjectsHex"/> holds every object as returned, VDM
+/// Header first, so the decoding below it can be redone by hand.
+/// </summary>
+public sealed class DiscoverIdentityReport
+{
+    /// <summary>"SOP" for the attached device, "SOP'" for the cable plug.</summary>
+    public string Recipient { get; set; } = "";
+
+    public bool DataAvailable { get; set; }
+
+    /// <summary>
+    /// True when every object the ID Header calls for was returned in the expected layout, false
+    /// when some were not, and null when that cannot be judged.
+    /// </summary>
+    public bool? Complete { get; set; }
+
+    /// <summary>Why there is no identity, or what about this one is incomplete or undecoded.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>ACK, NAK, BUSY or REQ, from the Structured VDM Header.</summary>
+    public string? CommandType { get; set; }
+    public string? StructuredVdmVersion { get; set; }
+
+    public List<string> ObjectsHex { get; set; } = [];
+
+    public IdHeaderReport? IdHeader { get; set; }
+    public string? CertStatXid { get; set; }
+    public ProductVdoReport? Product { get; set; }
+    public UfpVdoReport? Ufp { get; set; }
+    public DfpVdoReport? Dfp { get; set; }
+    public PassiveCableVdoReport? PassiveCable { get; set; }
+    public ActiveCableVdoReport? ActiveCable { get; set; }
+
+    /// <summary>
+    /// A VCONN Powered USB Device answers on SOP' as a cable plug does, but it is not a cable, and
+    /// it is kept out of the cable fields.
+    /// </summary>
+    public VconnPoweredDeviceVdoReport? VconnPoweredDevice { get; set; }
+
+    /// <summary>The plain English sentence, worded as what the device or cable declares.</summary>
+    public string? Declaration { get; set; }
+}
+
+/// <summary>
+/// One enumerated field. <see cref="Status"/> is "defined", "reserved" (the specification gives
+/// the value no meaning, or calls it invalid) or "deprecated" (it had a meaning once, stated in
+/// <see cref="Meaning"/>). A reserved value is never mapped onto a nearby defined one.
+/// </summary>
+public sealed class IdentityCode
+{
+    public int Code { get; init; }
+    public string Meaning { get; init; } = "";
+    public string Status { get; init; } = "";
+}
+
+public sealed class IdHeaderReport
+{
+    public bool UsbHostCapable { get; set; }
+    public bool UsbDeviceCapable { get; set; }
+
+    /// <summary>Product Type (UFP) for the attached device, Product Type (Cable Plug/VPD) on SOP'.</summary>
+    public IdentityCode ProductType { get; set; } = new();
+    public bool ModalOperationSupported { get; set; }
+
+    /// <summary>Null on SOP', where the field is reserved, and in Structured VDM Version 1.0.</summary>
+    public IdentityCode? ProductTypeDfp { get; set; }
+    public IdentityCode? ConnectorType { get; set; }
+    public string VendorId { get; set; } = "";
+    public string Raw { get; set; } = "";
+}
+
+public sealed class ProductVdoReport
+{
+    public string ProductId { get; set; } = "";
+    public string BcdDevice { get; set; } = "";
+    public string Raw { get; set; } = "";
+}
+
+public sealed class UfpVdoReport
+{
+    public IdentityCode VdoVersion { get; set; } = new();
+    public bool? Usb4DeviceCapable { get; set; }
+    public bool? Usb32DeviceCapable { get; set; }
+    public IdentityCode? Usb20DeviceCapability { get; set; }
+    public bool? NonReconfiguringAlternateModesSupported { get; set; }
+    public bool? ReconfiguringAlternateModesSupported { get; set; }
+    public bool? Tbt3AlternateModeSupported { get; set; }
+    public bool? VbusRequired { get; set; }
+    public bool? VconnRequired { get; set; }
+    public IdentityCode? VconnPower { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class DfpVdoReport
+{
+    public IdentityCode VdoVersion { get; set; } = new();
+    public bool? Usb4HostCapable { get; set; }
+    public bool? Usb32HostCapable { get; set; }
+    public bool? Usb20HostCapable { get; set; }
+    public int? PortNumber { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class PassiveCableVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? PlugType { get; set; }
+    public bool? EprCapable { get; set; }
+    public IdentityCode? Latency { get; set; }
+    public IdentityCode? TerminationType { get; set; }
+    public IdentityCode? MaxVbusVoltage { get; set; }
+
+    /// <summary>Null unless the code is a defined one: a deprecated code is not a voltage the cable stated.</summary>
+    public int? MaxVbusVolts { get; set; }
+    public IdentityCode? CurrentHandling { get; set; }
+    public int? MaxCurrentMilliamps { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class ActiveCableVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? PlugType { get; set; }
+    public bool? EprCapable { get; set; }
+    public IdentityCode? Latency { get; set; }
+    public IdentityCode? TerminationType { get; set; }
+    public IdentityCode? MaxVbusVoltage { get; set; }
+    public int? MaxVbusVolts { get; set; }
+    public bool? SbuSupported { get; set; }
+    public IdentityCode? SbuType { get; set; }
+    public bool? VbusThroughCable { get; set; }
+    public IdentityCode? CurrentHandling { get; set; }
+    public int? MaxCurrentMilliamps { get; set; }
+    public bool? SopDoublePrimeControllerPresent { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+
+    // Active Cable VDO2. Null when the second VDO was not returned.
+    public int? MaxOperatingTemperatureCelsius { get; set; }
+    public int? ShutdownTemperatureCelsius { get; set; }
+    public IdentityCode? U3CldPower { get; set; }
+    public bool? U3ToU0ThroughU3S { get; set; }
+    public IdentityCode? PhysicalConnection { get; set; }
+    public IdentityCode? ActiveElement { get; set; }
+    public bool? Usb4Supported { get; set; }
+    public int? Usb2HubHopsConsumed { get; set; }
+    public bool? Usb2Supported { get; set; }
+    public bool? Usb32Supported { get; set; }
+    public IdentityCode? LanesSupported { get; set; }
+    public bool? OpticallyIsolated { get; set; }
+    public bool? Usb4AsymmetricModeSupported { get; set; }
+    public IdentityCode? UsbGen { get; set; }
+
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+    public string? Raw2 { get; set; }
+}
+
+public sealed class VconnPoweredDeviceVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? MaxVbusVoltage { get; set; }
+    public int? MaxVbusVolts { get; set; }
+    public bool? ChargeThroughSupported { get; set; }
+    public IdentityCode? ChargeThroughCurrent { get; set; }
+    public int? VbusImpedanceMilliohms { get; set; }
+    public int? GroundImpedanceMilliohms { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
 }

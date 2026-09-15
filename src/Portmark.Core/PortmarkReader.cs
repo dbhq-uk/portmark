@@ -32,7 +32,7 @@ public static class PortmarkReader
         int connectors = report.Capability.ConnectorCount ?? 0;
         for (byte index = 1; index <= connectors; index++)
             report.Connectors.Add(ReadConnector(connection, index, report.Capability.Features,
-                                                batteryPercent, batteryFlow));
+                                                batteryPercent, batteryFlow, report.Capability.UcsiVersionBcd));
 
         return report;
     }
@@ -90,6 +90,7 @@ public static class PortmarkReader
 
         ushort version = BitConverter.ToUInt16(state.Payload, UcsiProtocol.OffsetVersion);
         capability.UcsiVersion = UcsiProtocol.FormatVersion(version);
+        capability.UcsiVersionBcd = version;
 
         UcsiResult caps = connection.Execute(UcsiProtocol.CmdGetCapability);
         if (!caps.Ok || caps.Payload.Length < 5)
@@ -122,7 +123,8 @@ public static class PortmarkReader
 
     private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
                                                 PpmFeatureReport? features, int? batteryPercent = null,
-                                                Power.BatteryFlow? batteryFlow = null)
+                                                Power.BatteryFlow? batteryFlow = null,
+                                                ushort? ucsiVersion = null)
     {
         bool cableDetailsAvailable = features?.CableDetailsAvailable ?? true;
         bool pdoDetailsAvailable = features?.PowerDataObjectDetailsAvailable ?? false;
@@ -188,6 +190,8 @@ public static class PortmarkReader
         // deduction alongside them would be noise at best and a contradiction at worst.
         report.Cable.Inferred = CableInference.FromConnector(report);
 
+        report.Identity = ReadIdentity(connection, index, report, features, ucsiVersion);
+
         bool consuming = report.PowerDirection == "consuming";
         report.Power.IsUnderNegotiated = ChargeDiagnostic.IsUnderNegotiated(
             report.Power.Negotiated?.NegotiatedPowerMilliwatts, report.Power.MaxAvailableMilliwatts, consuming);
@@ -197,6 +201,51 @@ public static class PortmarkReader
 
         report.Summary = Summarise(report);
         return report;
+    }
+
+    /// <summary>
+    /// Asks the attached device (SOP) and then the cable plug (SOP') for Discover Identity, but only
+    /// where <see cref="PdMessage.WhyNotAsk"/> allows it. Where it does not, nothing is sent and the
+    /// reason is the answer. The decoding lives in <see cref="DiscoverIdentity"/> so it can be tested
+    /// without a controller; this method issues the reads and records every exchange first.
+    /// </summary>
+    private static IdentityReport ReadIdentity(UcsiConnection connection, byte index, ConnectorReport report,
+                                               PpmFeatureReport? features, ushort? ucsiVersion)
+    {
+        string? whyNot = PdMessage.WhyNotAsk(ucsiVersion, features, report.Connected);
+        if (whyNot is not null) return new IdentityReport { Requested = false, Reason = whyNot };
+
+        return new IdentityReport
+        {
+            Requested = true,
+            Partner = ReadDiscoverIdentity(connection, index, report, UcsiProtocol.PdMessageRecipientSop),
+            Cable = ReadDiscoverIdentity(connection, index, report, UcsiProtocol.PdMessageRecipientSopPrime),
+        };
+    }
+
+    private static DiscoverIdentityReport ReadDiscoverIdentity(UcsiConnection connection, byte index,
+                                                               ConnectorReport report, byte recipient)
+    {
+        bool cablePlug = recipient == UcsiProtocol.PdMessageRecipientSopPrime;
+        string name = cablePlug ? "SOP'" : "SOP";
+
+        PdMessageTransfer transfer = PdMessage.Read((offset, count) =>
+        {
+            ulong control = UcsiProtocol.GetPdMessage(index, recipient, offset, count,
+                                                      UcsiProtocol.PdMessageDiscoverIdentity);
+            UcsiResult r = connection.Execute(UcsiProtocol.CmdGetPdMessage, control);
+            report.Raw.PdMessageExchanges.Add(new UcsiExchangeReport
+            {
+                Command = $"GET_PD_MESSAGE recipient={name} type=DiscoverIdentity offset={offset} bytes={count}",
+                ControlHex = $"0x{control:X12}",
+                Cci = r.Ok ? $"0x{r.Cci:X8}" : null,
+                PayloadHex = r.Ok ? Convert.ToHexString(r.Payload) : null,
+                Error = r.Error,
+            });
+            return r;
+        }, DiscoverIdentity.MaxBytes, soFar => DiscoverIdentity.ExpectedLength(soFar, cablePlug));
+
+        return DiscoverIdentity.FromTransfer(transfer, cablePlug);
     }
 
     /// <summary>
@@ -403,7 +452,7 @@ public static class PortmarkReader
                 : $"{attached}. Cable: not reported by this PC.";
 
         var cableParts = new List<string>();
-        if (cable.MaxWattsAt20Volts is int watts) cableParts.Add($"{watts}W");
+        if (cable.MaxWattsAt20Volts is int watts) cableParts.Add($"{watts}W at 20V");
         else if (cable.CurrentCapabilityMilliamps is int ma) cableParts.Add($"{ma} mA");
         if (cable.Speed is not null) cableParts.Add(cable.Speed.Display);
 

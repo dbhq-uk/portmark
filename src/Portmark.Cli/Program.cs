@@ -308,6 +308,18 @@ internal static class Program
                 output.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
+            // Discover Identity, only where the controller could be asked. Each line is the
+            // device's or cable's own declaration, and says so.
+            if (connector.Identity is { } identity)
+            {
+                if (identity.Partner is { DataAvailable: true, Declaration: { } deviceSays })
+                    output.WriteLine($"  Device ID    {Wrap(deviceSays, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                if (identity.Cable is { DataAvailable: true, Declaration: { } cableSays })
+                    output.WriteLine($"  Cable ID     {Wrap(cableSays, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                if (!identity.Requested && connector.Connected == true && identity.Reason is { } notAsked)
+                    output.WriteLine($"  Identity     {Wrap(notAsked, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+            }
+
             output.WriteLine();
         }
     }
