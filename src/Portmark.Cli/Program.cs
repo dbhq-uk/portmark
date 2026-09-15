@@ -56,6 +56,7 @@ internal static class Program
             "power" => PowerBudgetReport(),
             "watch" => Watch(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
+            "usb4" => Usb4Command.Run(args),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
             "report" => HardwareReport.Run(args),
@@ -608,7 +609,7 @@ internal static class Program
         }
     }
 
-    private static bool IsElevated()
+    internal static bool IsElevated()
     {
         using WindowsIdentity identity = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
@@ -620,7 +621,7 @@ internal static class Program
         return ExitError;
     }
 
-    private static string Wrap(string text, int width = 76)
+    internal static string Wrap(string text, int width = 76)
     {
         var lines = new List<string>();
         var line = new System.Text.StringBuilder();
@@ -651,6 +652,9 @@ internal static class Program
               portmark report          read all ports, write one file to attach to a hardware report
               portmark enable          switch on the port controller interface (needs admin, once)
               portmark disable         switch it back off (needs admin)
+              portmark usb4            what Windows' USB4 drivers report: links, speed, tunnels
+                                       (needs admin; reads a few seconds of trace events)
+              portmark usb4 --from F   decode a tracerpt XML file instead (no admin needed)
 
             OPTIONS
               --human                  human-readable output instead of JSON

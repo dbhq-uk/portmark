@@ -332,11 +332,15 @@ Diagnostic modes used during the spike, kept because they are how the above was 
 
 ## A narrow second path to cable information: the USB4 trace events
 
-Found while checking the cable verdict. Windows' USB4 host router driver emits TraceLogging
-rundown events describing the domain, and two of their fields are derived from the cable rather
-than the link: `CableUsb4Version` on the port event (from `PORT_CS_18[7:0]`) and `CableInfo` on
-the router event. Neither is the e-marker's identity, but both come from the Connection Manager's
-knowledge of the cable, which this machine's UCSI controller never exposes.
+Found while checking the cable verdict. Windows' USB4 drivers emit TraceLogging rundown events
+describing the domain, from two providers: `Microsoft.Windows.USB.USB4.HostRouter` describes the
+host interface and whether the domain is powered down, and `Microsoft.Windows.USB.USB4.DeviceRouter`
+describes each router, its ports and its protocol adapters. One port field is documented as
+coming from the cable rather than the link: `CableUsb4Version` on `PortInformation`, which
+Microsoft's table says is copied from `PORT_CS_18[7:0]`, "Cable USB Version". It is not the
+e-marker's identity, but it is the Connection Manager's knowledge of the cable, which this
+machine's UCSI controller never exposes. The router event also carries a `CableInfo` field, which
+Microsoft's table does not list at all, so nothing is known about what it holds.
 
 Captured on the ThinkPad T16 Gen 2 (AMD), elevated, with a DisplayPort adapter on connector 2 and
 nothing on the USB4 port:
@@ -353,14 +357,49 @@ PortInformation          IsDFP=1  SupportedLinkSpeeds=0xC  SupportedLinkWidths=0
                          CurrentLinkSpeed=0x0  CableUsb4Version=0x0  Tbt3CompatibleMode=0  IsLastPort=1
 ```
 
-Three things to note. The host router reports exactly one port, which matches the machine: only
-connector 1 is USB4. The fields read zero because the domain was powered down with no USB4 device
-attached; they need a USB4 or Thunderbolt device on that port to mean anything, and that capture
-has not been made yet. And the session needs administrator rights and `Get-WinEvent` cannot decode
-these self-describing events (it reports error 15003); `tracerpt` can. Microsoft's field table
-calls `CableUsbVersion` a Boolean, but the event on this machine names it `CableUsb4Version` and
-the register field is eight bits wide, so decode it from the emitted metadata rather than the
-documentation.
+The full set of events in that capture, in order: `RundownStart`, `HostRouterInformationPci`,
+`DomainSleepInformation` (`IsDomainPoweredDown=1`), `RundownComplete` from the host router provider,
+and the same four again; then `RundownStart`, `DeviceRouterInformation`, `PortInformation`,
+`USB3AdapterInformation` (adapter 4), `PCIeAdapterInformation` (5), `DPAdapterInformation` (6 and
+7) and `RundownComplete` from the device router provider. The host router's rundown appears twice,
+once when the session was created and again when the second provider was added, so enabling a
+provider is what triggers a rundown, and a reader has to expect repeats.
+
+Several things to note.
+
+- The root router's `PortInformation` reports exactly one port (`IsLastPort=1`, lane adapters 2
+  and 3), which matches the machine: only connector 1 is USB4. The event does not name a UCSI
+  connector, so that pairing is this machine's layout, not something the event says.
+- The link fields read zero because the host router reported the domain powered down. Zero there
+  is no link, not a slow one, and not a reading to decode: `AdapterState=0x0` would name
+  "disabled" and `CableUsb4Version=0x0` would look like a value, but a powered-down domain's
+  registers say nothing, and `CurrentLinkSpeed=0x0` is not a defined speed anyway. They need a USB4 or Thunderbolt device
+  on that port to mean anything, and that capture has not been made yet. `SupportedLinkSpeeds=0xC`
+  and `SupportedLinkWidths=0x3` are capability registers and do mean something already: Gen 2 and
+  Gen 3, single or dual lane.
+- The session needs administrator rights. `Get-WinEvent` cannot decode these self-describing
+  events: it returned all 17 with no name and no fields, and error 15003 in place of the payload.
+  `tracerpt` decodes them, while warning that "some events do not match the schema".
+- The emitted names differ from Microsoft's table. The port field is `CableUsb4Version`, where the
+  table says `CableUsbVersion` and types it Boolean for an eight-bit register field; the router
+  event says `VendorID` and `ProductID` where the table says `VendorId` and `ProductId`. The events
+  also carry fields the table does not list: `RouterUSB4Version`, `ConnectionManagerUSB4Version`,
+  `HostFirmwareVersion`, `CableInfo` and `LastPowerUpTimeInMs` on the router; `Lane0AdapterVersion`,
+  `HECError`, `FlowControlError`, `HECErrors`, `Lane1AdapterState`, the two
+  `Lane*AdapterLogicalLayerErrors`, `CLxSupport`, `CLxEnable` and `IsLastPort` on the port;
+  `MaximumSupportedLinkRate` on the USB 3 adapter, `DPTxBwAllocationModeEnable` on the DisplayPort
+  adapters, and `IsLastAdapter` on all of them. Read the names from the emitted events, not the page.
+- Nothing published that portmark can cite defines the encoding of `CableUsb4Version`'s eight bits,
+  so it is reported raw and not turned into a cable version.
+- Tunnelled protocols are per adapter, not per port: each `USB3AdapterInformation`,
+  `PCIeAdapterInformation` and `DPAdapterInformation` carries the driver's own `IsTunneled` flag,
+  and `AdapterType` names the adapter. Microsoft documents `AdapterType` as `ADP_CS_2[23..0]`, but
+  every adapter here also has bit 24 set (`0x1200101` for USB 3 downstream), which neither
+  Microsoft's page nor the register definitions explain.
+
+`portmark usb4` runs this recipe (elevated, for three seconds, always stopping the session and
+deleting the temporary files) and decodes the XML with those rules. `portmark usb4 --from usb4.xml`
+decodes a capture that has already been made, with no rights needed.
 
 ## The cable does say one thing, through the supply
 
