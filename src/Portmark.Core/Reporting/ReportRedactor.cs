@@ -35,8 +35,9 @@ public sealed class RedactionEntry
 /// one placeholder for the whole report, so two devices with different serials stay two devices,
 /// and the same serial in the JSON and the <c>--human</c> text stays visibly the same one.
 ///
-/// Raw bytes and CCI values are hex, and names are only matched as whole words, so a name that
-/// happens to spell out in hex can never corrupt a payload.
+/// Raw bytes, CCI values and <c>raw</c> objects are never searched for names or serials, so a name
+/// that happens to spell out in hex can never corrupt a payload. Elsewhere names are matched as
+/// whole words, and the bare machine, domain and user names in their own case only.
 /// </summary>
 public sealed partial class ReportRedactor
 {
@@ -109,10 +110,12 @@ public sealed partial class ReportRedactor
         if (name.EndsWith("InstanceId", StringComparison.OrdinalIgnoreCase))
         {
             // Enumerator and hardware ID say what the device is; only the last segment can carry a
-            // serial. A short decimal there is an ACPI unique ID, the same on every such machine.
+            // serial. A short decimal there is an ACPI unique ID, the same on every such machine,
+            // but only under the ACPI enumerator: under USB\ the same digits are a device's serial.
             int cut = value.LastIndexOf('\\');
             string instance = value[(cut + 1)..];
-            if (instance.Length == 0 || AcpiUniqueId().IsMatch(instance)) return null;
+            if (instance.Length == 0) return null;
+            if (value.StartsWith(@"ACPI\", StringComparison.OrdinalIgnoreCase) && AcpiUniqueId().IsMatch(instance)) return null;
             return value[..(cut + 1)] + RecordFieldValue(instance, "instance", "device instance ID", path);
         }
 
@@ -130,6 +133,17 @@ public sealed partial class ReportRedactor
         return Record(key, kind, prefix, numbered: true, path);
     }
 
+    /// <summary>
+    /// Raw bytes, CCI values and control words, and everything under a <c>raw</c> object. They are
+    /// hex by construction, so they cannot carry a readable name or serial, but a name or serial
+    /// that is itself all hex digits ("00000000") is a whole-word match for the entire value.
+    /// Field-name rules (serialNumber, *InstanceId, *Path) still apply inside them.
+    /// </summary>
+    private static bool IsRawData(string name) =>
+        name.EndsWith("Hex", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("Cci", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("raw", StringComparison.OrdinalIgnoreCase);
+
     private void ScrubStrings(JsonNode? node, string path)
     {
         if (node is JsonObject obj)
@@ -137,6 +151,7 @@ public sealed partial class ReportRedactor
             foreach ((string name, JsonNode? child) in obj.ToList())
             {
                 string childPath = path.Length == 0 ? name : $"{path}.{name}";
+                if (IsRawData(name)) continue;
                 if (AsString(child) is { } value)
                 {
                     string scrubbed = Scrub(value, childPath);
@@ -181,21 +196,48 @@ public sealed partial class ReportRedactor
         text = ReplaceOutsidePlaceholders(text, OtherUserInPath(), m =>
             Record($"user-in-path:{m.Value.ToLowerInvariant()}", "user name in a path", "user-name-in-path", numbered: true, path));
 
-        if (_hints.MachineName is { Length: > 0 } machine)
-            text = ReplaceWholeWord(text, machine, RegexOptions.IgnoreCase,
+        // The bare names are matched in their own case, and not at all when they are very short or
+        // a word portmark prints. Case-insensitive whole-word matching shipped first, and a user
+        // called "port" would have turned every "Port 1" into "[user-name] 1". A name in another
+        // case, or one of those words, is left in free text: redacting it would destroy the output
+        // the report exists to carry. Paths above still match in any case, as Windows paths do.
+        if (SearchableName(_hints.MachineName) is { } machine)
+            text = ReplaceWholeWord(text, machine, RegexOptions.None,
                                     () => Record("hint:machine", "this PC's name", "machine-name", numbered: false, path));
 
-        if (_hints.UserDomainName is { Length: > 0 } domain
+        if (SearchableName(_hints.UserDomainName) is { } domain
             && !domain.Equals(_hints.MachineName, StringComparison.OrdinalIgnoreCase))
-            text = ReplaceWholeWord(text, domain, RegexOptions.IgnoreCase,
+            text = ReplaceWholeWord(text, domain, RegexOptions.None,
                                     () => Record("hint:domain", "domain name", "domain-name", numbered: false, path));
 
-        if (_hints.UserName is { Length: > 0 } user)
-            text = ReplaceWholeWord(text, user, RegexOptions.IgnoreCase,
+        if (SearchableName(_hints.UserName) is { } user)
+            text = ReplaceWholeWord(text, user, RegexOptions.None,
                                     () => Record("hint:user", "user name", "user-name", numbered: false, path));
 
         return text;
     }
+
+    /// <summary>Names shorter than this are not searched for in free text: "Al" is in too many words' company.</summary>
+    private const int MinimumNameLength = 3;
+
+    /// <summary>
+    /// Words that occur in portmark's own output, in any case. A machine, domain or user with one
+    /// of these names is not searched for in free text.
+    /// </summary>
+    private static readonly HashSet<string> OutputVocabulary = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "port", "ports", "power", "cable", "cables", "charge", "charger", "charging", "battery",
+        "device", "devices", "usb", "hub", "hubs", "connector", "connectors", "source", "sink",
+        "display", "mode", "modes", "link", "speed", "partner", "host", "router", "adapter",
+        "adapters", "supply", "contract", "none", "unknown", "read", "report", "status", "version",
+        "vendor", "product", "serial", "name", "domain", "user", "machine", "test", "admin",
+        "administrator", "guest", "default", "public", "portmark", "windows", "system", "error",
+        "not", "yes", "no", "and", "the", "for", "data", "role", "volts", "watts", "amps", "lane",
+        "tunnel", "billboard", "dock", "monitor", "laptop", "desktop", "computer", "owner", "home",
+    };
+
+    private static string? SearchableName(string? name) =>
+        name is { Length: >= MinimumNameLength } && !OutputVocabulary.Contains(name) ? name : null;
 
     private static string ReplaceWholeWord(string text, string value, RegexOptions options, Func<string> placeholder)
     {

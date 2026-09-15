@@ -7,8 +7,9 @@ namespace Portmark.Cli;
 /// portmark usb4: what Windows' USB4 drivers say about the USB4 domain, its ports and tunnels.
 ///
 /// The one command that reads through ETW rather than UCSI or the USB hub IOCTLs, and so the one
-/// read that needs administrator rights. It changes nothing: the trace session exists for a few
-/// seconds and is stopped before the command returns.
+/// read that needs administrator rights. It is built to change nothing: the trace session exists
+/// for a few seconds and is stopped before the command returns. If the stop or the temporary
+/// folder's deletion fails, the command says so on stderr, naming what was left.
 /// </summary>
 internal static class Usb4Command
 {
@@ -49,8 +50,15 @@ internal static class Usb4Command
             try
             {
                 if (human) Console.Error.WriteLine("Reading the USB4 drivers' rundown, a few seconds...");
-                xml = Usb4Collector.CollectXml(Usb4Collector.DefaultWindow, cancel.Token, out string? error);
-                if (xml is null) return Fail(error ?? "the USB4 trace could not be collected.");
+                Usb4Collection collection = Usb4Collector.Collect(Usb4Collector.DefaultWindow, cancel.Token);
+
+                // Said whatever else happened, and on stderr so the JSON on stdout stays parseable:
+                // the command promises to leave nothing behind, so anything it did leave is named.
+                foreach (string problem in collection.CleanupProblems)
+                    Console.Error.WriteLine($"portmark: warning: {Program.Wrap(problem)}");
+
+                xml = collection.Xml;
+                if (xml is null) return Fail(collection.Error ?? "the USB4 trace could not be collected.");
             }
             finally
             {
@@ -96,7 +104,8 @@ internal static class Usb4Command
                 if (router.VendorName is not null || router.ModelName is not null)
                     Console.WriteLine($"    Name         {string.Join(" ", new[] { router.VendorName, router.ModelName }.Where(s => s is not null))}");
                 if (router.VendorId is not null)
-                    Console.WriteLine($"    ID           {router.VendorId}:{router.ProductId}");
+                    Console.WriteLine($"    ID           {router.VendorId}:{router.ProductId}"
+                                    + (router.RegisteredVendorName is not null ? $", vendor ID registered to {router.RegisteredVendorName}" : ""));
                 if (router.RouterUsb4Version is not null)
                     Console.WriteLine($"    USB4 version {(router.Usb4MajorVersion is int v ? $"{v} " : "not recognised ")}({router.RouterUsb4Version})");
 
