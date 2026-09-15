@@ -168,12 +168,16 @@ internal static class Program
             Console.WriteLine($"Billboard device {b.VendorId}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
                 Console.WriteLine($"  [{m.Index}] {m.Name}  mode {m.ModeNumber}  -> {m.State}");
+            if (b.TruncationNote is not null)
+                Console.WriteLine($"  {Wrap(b.TruncationNote, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
 
             Console.WriteLine(b.CarriesVideo
                 ? "  Video: DisplayPort alternate mode entered successfully."
                 : b.SupportsVideo
                     ? "  Video: DisplayPort is offered but was not entered."
-                    : "  Video: this adapter offers no DisplayPort alternate mode.");
+                    : b.Truncated
+                        ? "  Video: no DisplayPort mode in the part of the descriptor that could be read."
+                        : "  Video: this adapter offers no DisplayPort alternate mode.");
             Console.WriteLine();
         }
 
@@ -293,8 +297,15 @@ internal static class Program
     /// <summary>Shows attached devices as the tree they physically form.</summary>
     private static int UsbTree()
     {
-        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
-        List<Portmark.Core.Model.UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+        Portmark.Core.Model.UsbScanReport scan = Portmark.Core.Usb.UsbDeviceScanner.Scan();
+        List<Portmark.Core.Model.UsbDeviceReport> devices = scan.Devices;
+        List<Portmark.Core.Model.UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices, scan.PortStatuses);
+
+        if (Environment.GetCommandLineArgs().Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(roots, JsonOptions));
+            return ExitOk;
+        }
 
         if (roots.Count == 0)
         {
@@ -312,6 +323,10 @@ internal static class Program
         if (slow > 0)
             Console.WriteLine($"{slow} device(s) running slower than they could. Run 'portmark usb' for detail.");
 
+        int faults = scan.PortStatuses.Count(p => p.IsFault);
+        if (faults > 0)
+            Console.WriteLine($"{faults} port(s) where the hub reports a failed connection. Run 'portmark usb' for detail.");
+
         return ExitOk;
     }
 
@@ -324,6 +339,13 @@ internal static class Program
         else
         {
             string branch = last ? "└─ " : "├─ ";
+            if (node.PortStatus is { } status)
+            {
+                string fault = status.IsFault ? "  ** fault **" : "";
+                Console.WriteLine($"{prefix}{branch}{node.Label}: {status.Description}{fault}");
+                return;
+            }
+
             string detail = node.Device is { } d
                 ? $"  [{d.VendorId}:{d.ProductId}, {d.Speed}]"
                 : "";
@@ -398,10 +420,10 @@ internal static class Program
         Console.WriteLine("Watching USB ports. Plug something in, or press Ctrl+C to stop.");
         Console.WriteLine();
 
-        foreach (IReadOnlyList<Portmark.Core.Usb.UsbChange> batch in
-                 Portmark.Core.Usb.UsbWatcher.Watch(TimeSpan.FromSeconds(1), cancel.Token))
+        foreach (Portmark.Core.Usb.UsbWatchBatch batch in
+                 Portmark.Core.Usb.UsbWatcher.WatchWithFaults(TimeSpan.FromSeconds(1), cancel.Token))
         {
-            foreach (Portmark.Core.Usb.UsbChange change in batch)
+            foreach (Portmark.Core.Usb.UsbChange change in batch.Changes)
             {
                 Portmark.Core.Model.UsbDeviceReport d = change.Device;
                 string name = d.Product ?? d.Manufacturer ?? $"Unidentified {d.DeviceClass} device";
@@ -425,6 +447,8 @@ internal static class Program
 
                 Console.WriteLine();
             }
+
+            PrintPortFaults(batch.Faults);
         }
 
         Console.WriteLine("Stopped.");
@@ -434,9 +458,16 @@ internal static class Program
     /// <summary>Lists every attached USB device, read from the devices themselves.</summary>
     private static int UsbDevices()
     {
-        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
+        Portmark.Core.Model.UsbScanReport scan = Portmark.Core.Usb.UsbDeviceScanner.Scan();
+        List<Portmark.Core.Model.UsbDeviceReport> devices = scan.Devices;
 
-        if (devices.Count == 0)
+        if (Environment.GetCommandLineArgs().Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(scan, JsonOptions));
+            return ExitOk;
+        }
+
+        if (devices.Count == 0 && scan.PortStatuses.Count == 0)
         {
             Console.WriteLine("No USB devices found.");
             return ExitOk;
@@ -462,6 +493,11 @@ internal static class Program
             Console.WriteLine($"  Class        {d.DeviceClass}");
             Console.WriteLine($"  Speed        {d.Speed}");
             Console.WriteLine($"  USB version  {d.UsbVersion}");
+            if (d.LinkEvidence?.PortProtocols is { } protocols)
+                Console.WriteLine($"  Port         the hub reports {protocols}"
+                                + (d.LinkEvidence.CompanionPortProtocols is { } shared
+                                    ? $", and {shared} on companion port {d.LinkEvidence.CompanionPortNumber} of the same connector"
+                                    : ""));
             Console.WriteLine(d.MaxPowerMilliamps is int ma
                 ? $"  Requests     up to {ma} mA"
                 : "  Requests     not reported");
@@ -476,7 +512,45 @@ internal static class Program
             Console.WriteLine();
         }
 
+        PrintPortStatuses(scan.PortStatuses);
         return ExitOk;
+    }
+
+    /// <summary>
+    /// Ports whose hub reports something other than empty or connected. They have no working
+    /// device to list, which is why they need listing: a failed enumeration is otherwise invisible.
+    /// </summary>
+    private static void PrintPortStatuses(IReadOnlyList<Portmark.Core.Model.UsbPortStatusReport> ports)
+    {
+        foreach (Portmark.Core.Model.UsbPortStatusReport p in ports.OrderByDescending(x => x.IsFault))
+        {
+            Console.WriteLine($"{Portmark.Core.Usb.UsbTopology.HubLabel(p.HubPath)}, port {p.Port}");
+            if (p.VendorId is not null) Console.WriteLine($"  ID           {p.VendorId}:{p.ProductId}");
+            Console.WriteLine($"  Status       {p.ConnectionStatus}");
+            if (p.IsFault)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ** PORT FAULT **");
+            }
+            string said = char.ToUpperInvariant(p.Description[0]) + p.Description[1..] + ".";
+            Console.WriteLine($"  {Wrap(said, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+            Console.WriteLine();
+        }
+    }
+
+    /// <summary>
+    /// Ports whose hub has just started reporting a failed connection, once per occurrence. In the
+    /// hub's words and attributed to it: nothing read here knows what caused the failure.
+    /// </summary>
+    private static void PrintPortFaults(IReadOnlyList<Portmark.Core.Model.UsbPortStatusReport> faults)
+    {
+        foreach (Portmark.Core.Model.UsbPortStatusReport f in faults)
+        {
+            string stamp = DateTime.Now.ToString("HH:mm:ss");
+            Console.WriteLine($"[{stamp}] ! {Portmark.Core.Usb.UsbTopology.HubLabel(f.HubPath)}, port {f.Port}  ** PORT FAULT **");
+            Console.WriteLine($"          {Wrap($"{f.Description} ({f.ConnectionStatus}).", 64).Replace(Environment.NewLine, Environment.NewLine + "          ")}");
+            Console.WriteLine();
+        }
     }
 
     private static void PrintBillboards(PortmarkReport report)
@@ -486,11 +560,15 @@ internal static class Program
             Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
                 Console.WriteLine($"  {m.Name}: {m.State}");
+            if (b.TruncationNote is not null)
+                Console.WriteLine($"  {Wrap(b.TruncationNote, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
             Console.WriteLine(b.CarriesVideo
                 ? "  Video        yes, DisplayPort is active through this adapter"
                 : b.SupportsVideo
                     ? "  Video        supported but not currently active"
-                    : "  Video        this adapter offers no DisplayPort mode");
+                    : b.Truncated
+                        ? "  Video        not in the part of the descriptor that could be read"
+                        : "  Video        this adapter offers no DisplayPort mode");
             Console.WriteLine();
         }
     }

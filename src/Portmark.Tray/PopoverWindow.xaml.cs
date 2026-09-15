@@ -248,7 +248,7 @@ public partial class PopoverWindow : Window
             var stack = new StackPanel();
             stack.Children.Add(Styled(new TextBlock
             {
-                Text = b.CarriesVideo ? "Video active" : b.SupportsVideo ? "Video idle" : "No video",
+                Text = b.CarriesVideo ? "Video active" : b.SupportsVideo ? "Video idle" : b.Truncated ? "Video unknown" : "No video",
             }, "Value"));
 
             foreach (AlternateModeReport m in b.Modes)
@@ -256,7 +256,9 @@ public partial class PopoverWindow : Window
                 {
                     Text = $"{m.Name} · {m.State}",
                 }, "Caption"));
-            if (b.Modes.Count == 0)
+            if (b.TruncationNote is not null)
+                stack.Children.Add(Styled(new TextBlock { Text = b.TruncationNote, TextWrapping = TextWrapping.Wrap }, "Caption"));
+            if (b.Modes.Count == 0 && !b.Truncated)
                 stack.Children.Add(Styled(new TextBlock { Text = "No alternate modes" }, "Caption"));
 
             Items.Children.Add(Card(Row("IconDisplay", stack, b.CarriesVideo ? "Accent" : "TextMuted"),

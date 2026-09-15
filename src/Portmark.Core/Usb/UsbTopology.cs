@@ -19,20 +19,33 @@ public static class UsbTopology
     /// Where two hubs share both, the match is ambiguous and those hubs are left at the top level
     /// rather than nested under a guess.
     /// </summary>
-    public static List<UsbTreeNode> Build(IReadOnlyList<UsbDeviceReport> devices)
+    public static List<UsbTreeNode> Build(IReadOnlyList<UsbDeviceReport> devices) => Build(devices, []);
+
+    /// <summary>
+    /// Builds the tree with the ports whose hub reports a status other than empty or connected
+    /// placed under their hub, in port order among the devices. A port where enumeration failed has
+    /// no device, and belongs in the tree precisely because it has none.
+    /// </summary>
+    public static List<UsbTreeNode> Build(IReadOnlyList<UsbDeviceReport> devices,
+                                          IReadOnlyList<UsbPortStatusReport> ports)
     {
         // One node per hub interface, holding whatever the scan found on its ports.
-        var hubNodes = devices
-            .GroupBy(d => d.HubPath)
+        var hubNodes = devices.Select(d => d.HubPath)
+            .Concat(ports.Select(p => p.HubPath))
+            .Distinct()
             .ToDictionary(
-                g => g.Key,
-                g => new UsbTreeNode
+                path => path,
+                path => new UsbTreeNode
                 {
-                    Label = DescribeHubPath(g.Key),
-                    IsRootHub = IsRootHub(g.Key),
-                    Children = g.OrderBy(d => d.Port)
-                                .Select(d => new UsbTreeNode { Device = d, Label = Describe(d) })
-                                .ToList(),
+                    Label = DescribeHubPath(path),
+                    IsRootHub = IsRootHub(path),
+                    Children = devices.Where(d => d.HubPath == path)
+                                      .Select(d => (d.Port, Node: new UsbTreeNode { Device = d, Label = Describe(d) }))
+                                      .Concat(ports.Where(p => p.HubPath == path)
+                                                   .Select(p => (p.Port, Node: new UsbTreeNode { PortStatus = p, Label = $"Port {p.Port}" })))
+                                      .OrderBy(x => x.Port)
+                                      .Select(x => x.Node)
+                                      .ToList(),
                 });
 
         // A hub appears twice: once as a device on its parent's port, and once as an interface of
@@ -63,6 +76,9 @@ public static class UsbTopology
             .OrderByDescending(n => n.IsRootHub)
             .ToList();
     }
+
+    /// <summary>"This PC", or the hub's vendor and product, for naming a port outside the tree.</summary>
+    public static string HubLabel(string hubPath) => DescribeHubPath(hubPath);
 
     private static bool MatchesDevice(string hubPath, UsbDeviceReport hub)
     {
