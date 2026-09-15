@@ -97,6 +97,10 @@ apply.
 portmark names no cause. It reports the gap, what the controller thinks of it, and what the
 evidence cannot tell. A supply advertising 100W is not proof that it can deliver 100W.
 
+Where the battery reports it, portmark also shows the battery's own charge or discharge rate, and
+says so when a battery is losing charge on external power. That is the battery's flow, not the
+power arriving through the cable, and it is labelled that way.
+
 ## Why you cannot just look at the connector
 
 Two USB-C cables can be physically identical and differ by a factor of twenty in power and eighty
@@ -121,10 +125,14 @@ portmark reads from two independent sources. The first needs nothing at all.
 
 | Tier | Requires | Tells you |
 |---|---|---|
-| **Zero setup** | nothing - works on first run | Every attached USB device, read from its own descriptors. Alternate modes by SVID, whether **DisplayPort is currently active**, and whether anything is **running slower than it could**. |
-| **Extended** | a one-time administrator step | Port state and partner, power direction, the negotiated PD contract, the supply's full voltage/current profile, and cable e-marker data *where the controller supports it*. |
+| **Zero setup** | nothing - works on first run | Every attached USB device, read from its own descriptors, with the registered name of each vendor ID. Alternate modes by SVID, whether **DisplayPort is currently active**, whether anything is **running slower than it could**, and the battery's own charge, rate and health. |
+| **Extended** | a one-time administrator step | Port state and partner, power direction, the negotiated PD contract, the supply's voltage/current offers (up to seven standard-range objects), and cable e-marker data *where the controller supports it*. |
 
 Most of what people want is in the first tier. You can ignore the second entirely.
+
+`portmark usb4` sits outside both tiers. It reads the USB4 drivers' trace events, which needs
+administrator rights every time it runs, and it only has something to report while a USB4 link is
+up.
 
 ## Install
 
@@ -150,6 +158,12 @@ portmark tree            show attached devices as the tree they physically form
 portmark billboard       report alternate modes and video capability
 portmark power           compare what devices asked for against what each hub can supply
 portmark watch           report devices arriving and leaving as it happens
+portmark battery         read the batteries' own charge, rate and health
+portmark battery --sample SECONDS
+                         average the battery's net charge flow over an interval
+portmark usb4            what Windows' USB4 drivers report: links, speed, tunnels (admin)
+portmark usb4 --from F   decode a saved tracerpt XML file instead (no admin)
+portmark report          write one file to attach to a hardware report (nothing is sent)
 portmark enable          one-time administrator setup for the extended tier
 portmark disable         undo it
 ```
@@ -195,6 +209,12 @@ Being specific about this matters more than the feature list.
   video.
 - **UCSI carries no video field.** Any tool telling you a *cable* does or does not carry video from
   UCSI alone is guessing.
+- **The battery rate is the battery's own measurement.** It is not charger or cable power. Some
+  batteries report zero while charging, or only report a rate while discharging, and portmark says
+  when a reading is not usable rather than presenting it.
+- **USB4 link data needs a live USB4 link.** With nothing on the USB4 port the domain is powered
+  down, its registers read zero, and portmark reports that there is no link rather than drawing any
+  conclusion about a cable.
 - **Roughly a third of machines will return little or nothing.** portmark detects this on first run
   and says so, rather than showing you a blank panel or a confident wrong answer.
 
@@ -233,7 +253,9 @@ before deciding - the honest answer is that enabling it has a real trade-off.
 
 **Does it phone home?**
 No. No telemetry, no network calls, no analytics. It is a single executable that reads your
-hardware and prints the result.
+hardware and prints the result. `portmark report` writes a file for you to share if you choose; it
+never uploads anything, and it removes serial numbers, device paths and your user and machine names
+unless you pass `--no-redact`.
 
 ## Hardware coverage
 
@@ -246,8 +268,9 @@ mode and DisplayPort, matching the spec sheet.
 That controller does not report cable details: it answers `GET_CABLE_PROPERTY` with UCSI's
 Not Supported indicator, exactly as it answers an undefined command.
 
-That is one machine. **If you run portmark, please open an issue with the output of
-`portmark --human`** - particularly whether your controller reports cable details. That capability
+That is one machine. **If you run portmark, please run `portmark report` and attach the file it
+writes to a [hardware report](../../issues/new?template=hardware-report.yml)** - particularly
+whether your controller reports cable details. That capability
 is not documented anywhere and the only way to find out how common it is, is to collect it.
 
 ## Contributing
@@ -268,8 +291,11 @@ attached.
 
 ## How this was built
 
-portmark was written against the USB-IF UCSI specification, the USB Billboard Device Class specification,
-Microsoft Learn documentation, and direct observation of the Windows driver stack. The reverse
+portmark was written against the USB-IF UCSI specification, the USB Power Delivery specification,
+the USB Billboard Device Class specification, Microsoft Learn documentation (including the battery
+class and USB4 trace event references), and direct observation of the Windows driver stack. Vendor
+names come from The USB ID Repository, used under its BSD licence; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The reverse
 engineering that made it possible - including recovering the in-box UCSI interface GUID and control
 codes, which differ from the ones in Microsoft's published samples - is documented in
 [docs/SPIKE.md](docs/SPIKE.md), along with what could not be established and why.
