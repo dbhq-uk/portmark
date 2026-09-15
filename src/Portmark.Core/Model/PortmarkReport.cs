@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Portmark.Core.Usb;
 
 namespace Portmark.Core.Model;
 
@@ -368,6 +369,14 @@ public sealed class PortAlternateModeReport
 {
     public int Offset { get; init; }
     public string Svid { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="Svid"/> as a USB vendor ID, null when it is a Standard ID
+    /// such as DisplayPort or the vendor list does not name it. Who holds the number, not proof of
+    /// who made anything.
+    /// </summary>
+    public string? VendorName => VendorNames.ForSvid(Svid);
+
     public string Name { get; init; } = "";
     public string ModeId { get; init; } = "";
     public bool IsDisplayPort { get; init; }
@@ -380,6 +389,13 @@ public sealed class PortAlternateModeReport
 public sealed class BillboardReport
 {
     public string VendorId { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number, not proof of who made the adapter.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     public string ProductId { get; init; } = "";
     public int PreferredModeIndex { get; init; }
     public List<AlternateModeReport> Modes { get; init; } = [];
@@ -395,6 +411,14 @@ public sealed class AlternateModeReport
 {
     public int Index { get; init; }
     public string Svid { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="Svid"/> as a USB vendor ID, null when it is a Standard ID
+    /// such as DisplayPort or the vendor list does not name it. Who holds the number, not proof of
+    /// who made anything.
+    /// </summary>
+    public string? VendorName => VendorNames.ForSvid(Svid);
+
     public string Name { get; init; } = "";
     public int ModeNumber { get; init; }
     public string State { get; init; } = "";
@@ -409,6 +433,15 @@ public sealed class AlternateModeReport
 public sealed class UsbDeviceReport
 {
     public string VendorId { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number, not proof of who made the device: products ship under the ID of
+    /// the chip inside them, and a device can report any ID. The device's own claim is
+    /// <see cref="Manufacturer"/>, which can disagree with this and is not corrected by it.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     public string ProductId { get; init; } = "";
     public string? Manufacturer { get; init; }
     public string? Product { get; init; }
