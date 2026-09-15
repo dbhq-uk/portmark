@@ -42,8 +42,8 @@ internal static class Program
             return ExitOk;
         }
 
-        // The value after --out is a path, not a command, even though it does not start with '-'.
-        string? command = args.Where((a, i) => !a.StartsWith('-') && (i == 0 || args[i - 1] != "--out"))
+        // The value after --out, --from or --sample is not a command, even though it does not start with '-'.
+        string? command = args.Where((a, i) => !a.StartsWith('-') && (i == 0 || args[i - 1] is not ("--out" or "--from" or "--sample")))
                               .FirstOrDefault();
         return command switch
         {

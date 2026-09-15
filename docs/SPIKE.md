@@ -397,8 +397,11 @@ Several things to note.
   every adapter here also has bit 24 set (`0x1200101` for USB 3 downstream), which neither
   Microsoft's page nor the register definitions explain.
 
-`portmark usb4` runs this recipe (elevated, for three seconds, always stopping the session and
-deleting the temporary files) and decodes the XML with those rules. `portmark usb4 --from usb4.xml`
+`portmark usb4` runs this recipe (elevated, for three seconds, under a `Global\portmark-usb4`
+mutex so two captures cannot stop each other's session) and decodes the XML with those rules. It
+only decodes after `logman stop` has succeeded, and it stops the session and deletes the temporary
+files on every path; if either of those fails, it says so, naming the session and the folder left
+behind. `portmark usb4 --from usb4.xml`
 decodes a capture that has already been made, with no rights needed.
 
 ## The cable does say one thing, through the supply

@@ -20,8 +20,10 @@ public sealed class Usb4Report
         [Usb4RundownParser.HostRouterProvider, Usb4RundownParser.DeviceRouterProvider];
 
     /// <summary>
-    /// True when the device router provider marked the end of its rundown. False means the port
-    /// and adapter lists may be a prefix of what the driver would have described.
+    /// True when the device router rundown the report is built from ran from RundownStart to
+    /// RundownComplete. That is the last complete one when the capture holds several; false means
+    /// none completed, and the port and adapter lists may be a prefix of what the driver would
+    /// have described.
     /// </summary>
     public bool RundownComplete { get; set; }
 
@@ -65,7 +67,17 @@ public sealed class Usb4RouterReport
 
     public string? InstancePath { get; set; }
     public string? VendorId { get; set; }
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number, not proof of who made the router; <see cref="VendorName"/> is
+    /// what the router itself says.
+    /// </summary>
+    public string? RegisteredVendorName { get; set; }
+
     public string? ProductId { get; set; }
+
+    /// <summary>The router's own AsciiVendorName, as emitted.</summary>
     public string? VendorName { get; set; }
     public string? ModelName { get; set; }
     public string? Uuid { get; set; }

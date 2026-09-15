@@ -56,6 +56,97 @@ public class Usb4RundownTests
     }
 
     [Fact]
+    public void RouterVendorId_CarriesItsRegisteredName()
+    {
+        // ROUTER_CS_0's vendor ID is a USB-IF vendor ID; 0x438 is registered to AMD, whose host
+        // router this is. The PCI vendor ID is a different registry and is not named from this list.
+        Usb4RouterReport router = Captured().Domains[0].Routers[0];
+
+        Assert.Equal("Advanced Micro Devices, Inc.", router.RegisteredVendorName);
+    }
+
+    [Fact]
+    public void ARouterAbsentFromALaterCompleteRundown_IsNotReported()
+    {
+        string xml = Events(
+            Marker(DeviceRouter, "RundownStart"),
+            Router(topology: 0), Router(topology: 1),
+            Marker(DeviceRouter, "RundownComplete"),
+            Marker(DeviceRouter, "RundownStart"),
+            Router(topology: 0),
+            Marker(DeviceRouter, "RundownComplete"));
+
+        Usb4Report report = Usb4RundownParser.Parse(xml);
+
+        Usb4RouterReport router = Assert.Single(Assert.Single(report.Domains).Routers);
+        Assert.True(router.IsHostRouter);
+        Assert.True(report.RundownComplete);
+        Assert.Null(report.Explanation);
+    }
+
+    [Fact]
+    public void ACompleteRundownFollowedByAnInterruptedOne_UsesTheCompleteOneAndSaysSo()
+    {
+        // The earlier RundownComplete must not make the later, cut-off rundown look finished, and
+        // the cut-off one must not be mixed into the complete one.
+        string xml = Events(
+            Marker(DeviceRouter, "RundownStart"),
+            Router(topology: 0), Router(topology: 1),
+            Marker(DeviceRouter, "RundownComplete"),
+            Marker(DeviceRouter, "RundownStart"),
+            Router(topology: 0));
+
+        Usb4Report report = Usb4RundownParser.Parse(xml);
+
+        Assert.Equal(2, Assert.Single(report.Domains).Routers.Count);
+        Assert.True(report.RundownComplete);
+        Assert.NotNull(report.Explanation);
+        Assert.Contains("did not finish", report.Explanation);
+    }
+
+    [Fact]
+    public void AnInterruptedRundownWithNoCompleteOne_IsReportedIncomplete()
+    {
+        string xml = Events(
+            Marker(DeviceRouter, "RundownStart"),
+            Router(topology: 0));
+
+        Usb4Report report = Usb4RundownParser.Parse(xml);
+
+        Assert.Single(Assert.Single(report.Domains).Routers);
+        Assert.False(report.RundownComplete);
+        Assert.NotNull(report.Explanation);
+    }
+
+    private const string DeviceRouter = "Microsoft.Windows.USB.USB4.DeviceRouter";
+
+    private static string Events(params string[] events) => $"<Events>{string.Concat(events)}</Events>";
+
+    private static string Marker(string provider, string name) => $"""
+        <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+        	<System><Provider Name="{provider}" /></System>
+        	<EventData></EventData>
+        	<RenderingInfo Culture="en-GB"><Task>{name}</Task></RenderingInfo>
+        </Event>
+        """;
+
+    private static string Router(int topology) => $"""
+        <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+        	<System><Provider Name="{DeviceRouter}" /></System>
+        	<EventData>
+        		<Data Name="IsRundownEvent">1</Data>
+        		<Data Name="DomainID">0x1</Data>
+        		<Data Name="TopologyID">{topology}</Data><Data Name="TopologyID">0</Data><Data Name="TopologyID">0</Data>
+        		<Data Name="TopologyID">0</Data><Data Name="TopologyID">0</Data><Data Name="TopologyID">0</Data>
+        		<Data Name="TopologyID">0</Data>
+        		<Data Name="VendorID">0x438</Data>
+        		<Data Name="ProductID">0x20A</Data>
+        	</EventData>
+        	<RenderingInfo Culture="en-GB"><Task>DeviceRouterInformation</Task></RenderingInfo>
+        </Event>
+        """;
+
+    [Fact]
     public void PoweredDownZeros_AreNoLink_NotASlowLinkOrAnOldCable()
     {
         Usb4PortReport port = Captured().Domains[0].Routers[0].Ports[0];

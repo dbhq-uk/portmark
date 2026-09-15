@@ -98,6 +98,36 @@ public class ReportRedactorTests
     }
 
     [Fact]
+    public void AShortNumericInstanceSegment_IsOnlyLeftAloneUnderAcpi()
+    {
+        // The same four digits are an ACPI unique ID under ACPI\, but under USB\ the last segment is
+        // the device's serial number, and a short serial is still a serial.
+        JsonNode acpi = JsonNode.Parse("""{ "a": { "ucmDeviceInstanceId": "ACPI\\USBC000\\1234" } }""")!;
+        var acpiRedactor = new ReportRedactor(Hints);
+        acpiRedactor.Redact(acpi);
+        Assert.Equal(@"ACPI\USBC000\1234", (string?)acpi["a"]!["ucmDeviceInstanceId"]);
+        Assert.Empty(acpiRedactor.Entries);
+
+        JsonNode usb = JsonNode.Parse("""{ "b": { "deviceInstanceId": "USB\\VID_0BDA&PID_8153\\1234" } }""")!;
+        var usbRedactor = new ReportRedactor(Hints);
+        usbRedactor.Redact(usb);
+        Assert.Equal(@"USB\VID_0BDA&PID_8153\[instance-1]", (string?)usb["b"]!["deviceInstanceId"]);
+        Assert.Equal("device instance ID", Assert.Single(usbRedactor.Entries).Kind);
+
+        // In one report, the USB serial's digits are removed wherever they appear, the ACPI ID
+        // included: a redacted value must not survive anywhere in the file.
+        JsonNode both = JsonNode.Parse("""
+            {
+              "a": { "ucmDeviceInstanceId": "ACPI\\USBC000\\1234" },
+              "b": { "deviceInstanceId": "USB\\VID_0BDA&PID_8153\\1234" }
+            }
+            """)!;
+        new ReportRedactor(Hints).Redact(both);
+        Assert.Equal(@"USB\VID_0BDA&PID_8153\[instance-1]", (string?)both["b"]!["deviceInstanceId"]);
+        Assert.Equal(@"ACPI\USBC000\[instance-1]", (string?)both["a"]!["ucmDeviceInstanceId"]);
+    }
+
+    [Fact]
     public void DevicePathsAreReplacedWhole()
     {
         JsonNode root = JsonNode.Parse("""
@@ -116,14 +146,15 @@ public class ReportRedactorTests
     {
         JsonNode root = JsonNode.Parse("""
             {
-              "error": "could not open C:\\Users\\jsmith\\AppData\\Local\\x on desktop-7qx2k1p",
-              "human": [ "Signed in as JSmith", "C:\\Users\\alice\\Desktop" ]
+              "error": "could not open c:\\users\\JSMITH\\AppData\\Local\\x on DESKTOP-7QX2K1P",
+              "human": [ "Signed in as jsmith", "C:\\Users\\alice\\Desktop" ]
             }
             """)!;
 
         var redactor = new ReportRedactor(Hints);
         redactor.Redact(root);
 
+        // The profile path matches in any case, as Windows paths do.
         Assert.Equal(@"could not open [user-profile]\AppData\Local\x on [machine-name]", (string?)root["error"]);
         Assert.Equal("Signed in as [user-name]", (string?)root["human"]![0]);
         Assert.Equal(@"C:\Users\[user-name-in-path-1]\Desktop", (string?)root["human"]![1]);
@@ -132,20 +163,82 @@ public class ReportRedactorTests
     [Fact]
     public void NamesAreOnlyMatchedAsWholeWords()
     {
-        // A user called "port" must not turn every "Port 1" into a placeholder, and a name that
-        // happens to appear inside a hex payload must not corrupt the raw bytes.
-        var hints = new IdentityHints(MachineName: "BEEF", UserName: "port", UserProfilePath: null, UserDomainName: null);
+        // A name that happens to appear inside a hex payload must not corrupt the raw bytes.
+        var hints = new IdentityHints(MachineName: "BEEF", UserName: "jsmith", UserProfilePath: null, UserDomainName: null);
         JsonNode root = JsonNode.Parse("""
-            { "human": [ "Portable", "report" ], "raw": "00BEEF00", "name": "port" }
+            { "human": [ "jsmithson", "BEEFY" ], "raw": "00BEEF00", "name": "jsmith" }
             """)!;
 
         var redactor = new ReportRedactor(hints);
         redactor.Redact(root);
 
-        Assert.Equal("Portable", (string?)root["human"]![0]);
-        Assert.Equal("report", (string?)root["human"]![1]);
+        Assert.Equal("jsmithson", (string?)root["human"]![0]);
+        Assert.Equal("BEEFY", (string?)root["human"]![1]);
         Assert.Equal("00BEEF00", (string?)root["raw"]);
         Assert.Equal("[user-name]", (string?)root["name"]);
+    }
+
+    [Fact]
+    public void AUserNamedLikeAWordPortmarkPrints_DoesNotEatTheOutput()
+    {
+        // Whole-word matching alone is not enough: a user called "port" or "power" is a whole word
+        // in every "Port 1" and "Power" line portmark prints. Such names are too common in the
+        // output to search for, and the rest are matched in their own case, so "Grace" the user is
+        // redacted where "grace" the word is not. Profile paths still match in any case.
+        var hints = new IdentityHints(MachineName: "power", UserName: "port", UserProfilePath: @"C:\Users\port", UserDomainName: "Al");
+        JsonNode root = JsonNode.Parse("""
+            {
+              "human": [ "Port 1", "Power        45W", "port 2 has no power", "Al is short", "c:\\USERS\\Port\\AppData" ],
+              "name": "port"
+            }
+            """)!;
+
+        var redactor = new ReportRedactor(hints);
+        redactor.Redact(root);
+
+        Assert.Equal("Port 1", (string?)root["human"]![0]);
+        Assert.Equal("Power        45W", (string?)root["human"]![1]);
+        Assert.Equal("port 2 has no power", (string?)root["human"]![2]);
+        Assert.Equal("Al is short", (string?)root["human"]![3]);
+        Assert.Equal(@"[user-profile]\AppData", (string?)root["human"]![4]);
+        Assert.Equal("port", (string?)root["name"]);
+
+        var named = new ReportRedactor(new IdentityHints(MachineName: null, UserName: "Grace", UserProfilePath: null, UserDomainName: null));
+        JsonNode other = JsonNode.Parse("""{ "human": [ "Signed in as Grace", "a grace period" ] }""")!;
+        named.Redact(other);
+        Assert.Equal("Signed in as [user-name]", (string?)other["human"]![0]);
+        Assert.Equal("a grace period", (string?)other["human"]![1]);
+    }
+
+    [Fact]
+    public void RawDataFields_AreNeverTreatedAsText_EvenWhenTheWholeValueIsAName()
+    {
+        // A user or serial of "00000000" is a whole-word match for an all-zero payload. The raw
+        // bytes are what make a report checkable, so they are never searched for names.
+        var hints = new IdentityHints(MachineName: "00000000", UserName: "00000000", UserProfilePath: null, UserDomainName: null);
+        JsonNode root = JsonNode.Parse("""
+            {
+              "serialNumber": "00000000",
+              "raw": { "connectorStatusHex": "00000000", "connectorStatusCci": "00000000" },
+              "exchange": { "controlHex": "00000000", "cci": "00000000", "payloadHex": "00000000" },
+              "pdos": { "raw": "00000000", "raw2": "00000000", "objectsHex": [ "00000000" ] },
+              "note": "Signed in as 00000000"
+            }
+            """)!;
+
+        var redactor = new ReportRedactor(hints);
+        redactor.Redact(root);
+
+        Assert.Equal("[serial-1]", (string?)root["serialNumber"]);
+        Assert.Equal("00000000", (string?)root["raw"]!["connectorStatusHex"]);
+        Assert.Equal("00000000", (string?)root["raw"]!["connectorStatusCci"]);
+        Assert.Equal("00000000", (string?)root["exchange"]!["controlHex"]);
+        Assert.Equal("00000000", (string?)root["exchange"]!["cci"]);
+        Assert.Equal("00000000", (string?)root["exchange"]!["payloadHex"]);
+        Assert.Equal("00000000", (string?)root["pdos"]!["raw"]);
+        Assert.Equal("00000000", (string?)root["pdos"]!["raw2"]);
+        Assert.Equal("00000000", (string?)root["pdos"]!["objectsHex"]![0]);
+        Assert.Equal("Signed in as [serial-1]", (string?)root["note"]);
     }
 
     [Fact]

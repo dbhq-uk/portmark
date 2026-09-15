@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Xml.Linq;
+using Portmark.Core.Usb;
 
 namespace Portmark.Core.Usb4;
 
@@ -37,18 +38,23 @@ public static class Usb4RundownParser
         }
     }
 
+    /// <summary>One provider's events chosen to describe the domain, and whether they are a whole rundown.</summary>
+    private sealed record Snapshot(List<TraceEvent> Events, bool Complete, bool LaterRundownInterrupted);
+
     public static Usb4Report Parse(string xml)
     {
-        List<TraceEvent> events = ReadEvents(XDocument.Parse(xml));
-        var report = new Usb4Report
-        {
-            RundownComplete = events.Any(e => e.Provider == DeviceRouterProvider && e.Name == "RundownComplete"),
-        };
+        List<TraceEvent> all = ReadEvents(XDocument.Parse(xml));
+        Snapshot host = LatestSnapshot(all.Where(e => e.Provider == HostRouterProvider));
+        Snapshot device = LatestSnapshot(all.Where(e => e.Provider == DeviceRouterProvider));
+        List<TraceEvent> events = [.. host.Events, .. device.Events];
+
+        var report = new Usb4Report { RundownComplete = device.Complete };
 
         // Enabling each provider makes the drivers emit a fresh rundown, so the same domain,
         // router, port or adapter can be described more than once in one capture. The host
-        // router's rundown appeared twice on this machine. Later descriptions replace earlier
-        // ones rather than adding a second copy.
+        // router's rundown appeared twice on this machine. Only one rundown per provider is used
+        // (see LatestSnapshot), so within it each thing is described once; the replacing below
+        // only guards against a driver repeating itself inside one rundown.
         var domains = new Dictionary<string, Usb4DomainReport>();
         var routers = new Dictionary<(string, string), Usb4RouterReport>();
         var ports = new Dictionary<(string, string, string), TraceEvent>();
@@ -108,6 +114,11 @@ public static class Usb4RundownParser
                     Usb4RouterReport r = RouterFor(domainId, Topology(e, "TopologyID"));
                     r.InstancePath = e.Get("DeviceInstancePath");
                     r.VendorId = e.Get("VendorID") ?? e.Get("VendorId");
+                    // ROUTER_CS_0's Vendor ID is USB-IF assigned, so the USB list names it. tracerpt
+                    // prints it without leading zeros ("0x438"), which VendorNames.Find(string) rejects.
+                    r.RegisteredVendorName = ParseLong(r.VendorId) is long vid and >= 0 and <= 0xFFFF
+                        ? VendorNames.Find((ushort)vid)
+                        : null;
                     r.ProductId = e.Get("ProductID") ?? e.Get("ProductId");
                     r.VendorName = NullIfEmpty(e.Get("AsciiVendorName"));
                     r.ModelName = NullIfEmpty(e.Get("AsciiModelName"));
@@ -152,17 +163,69 @@ public static class Usb4RundownParser
 
         report.Domains.AddRange(domains.Values);
 
+        var explanation = new List<string>();
         if (report.Domains.Count == 0)
-            report.Explanation =
+            explanation.Add(
                 "Windows' USB4 drivers described no USB4 domain. This PC may have no USB4 host "
               + "router, or one that Windows' USB4 drivers do not manage; the events cannot tell "
-              + "those apart.";
+              + "those apart.");
         else if (!report.RundownComplete)
-            report.Explanation =
+            explanation.Add(
                 "The device router rundown did not finish inside the collection window, so the "
-              + "routers, ports and adapters below may not be all of them.";
+              + "routers, ports and adapters below may not be all of them.");
 
+        if (host.LaterRundownInterrupted || device.LaterRundownInterrupted)
+            explanation.Add(
+                "The USB4 drivers began describing the domain again during the capture and that later "
+              + "description did not finish, so what is below is from the last description that did.");
+
+        report.Explanation = explanation.Count > 0 ? string.Join(" ", explanation) : null;
         return report;
+    }
+
+    /// <summary>
+    /// Picks the one rundown of a provider's events that the report describes. Each rundown sits
+    /// between RundownStart and RundownComplete; the last complete one is used, because merging
+    /// rundowns kept a router that a later rundown no longer described, and treating any
+    /// RundownComplete as the end made a later rundown cut off by the window look finished. When
+    /// no rundown completed, the last one is used and reported incomplete. Events outside any
+    /// rundown are only used when the capture has no rundown markers at all, since they cannot be
+    /// placed before or after a particular description.
+    /// </summary>
+    private static Snapshot LatestSnapshot(IEnumerable<TraceEvent> providerEvents)
+    {
+        var rundowns = new List<(List<TraceEvent> Events, bool Complete)>();
+        var current = new List<TraceEvent>();
+        bool started = false;
+
+        foreach (TraceEvent e in providerEvents)
+        {
+            switch (e.Name)
+            {
+                case "RundownStart":
+                    if (started) rundowns.Add((current, false));
+                    current = [];
+                    started = true;
+                    break;
+                case "RundownComplete":
+                    // A completion whose start was not seen is not a whole rundown.
+                    rundowns.Add((current, started));
+                    current = [];
+                    started = false;
+                    break;
+                default:
+                    current.Add(e);
+                    break;
+            }
+        }
+        if (started) rundowns.Add((current, false));
+
+        if (rundowns.Count == 0) return new Snapshot(current, false, false);
+
+        int lastComplete = rundowns.FindLastIndex(r => r.Complete);
+        return lastComplete < 0
+            ? new Snapshot(rundowns[^1].Events, false, false)
+            : new Snapshot(rundowns[lastComplete].Events, true, lastComplete < rundowns.Count - 1);
     }
 
     private static Usb4PortReport BuildPort(TraceEvent e, bool? domainPoweredDown)
