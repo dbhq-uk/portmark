@@ -180,8 +180,10 @@ public partial class App : System.Windows.Application
 
             if (charging?.Power is { DataAvailable: true, MaxAvailableMilliwatts: int mw } p && mw > 0)
             {
-                string now = p.Negotiated?.NegotiatedPowerMilliwatts is int drawn
-                    ? $"Drawing {drawn / 1000.0:0.#}W of {mw / 1000.0:0.#}W available"
+                // The contract is what was negotiated, not power measured flowing, so it is named
+                // as a contract.
+                string now = p.Negotiated?.NegotiatedPowerMilliwatts is int contract
+                    ? $"{contract / 1000.0:0.#}W contract, supply offers up to {mw / 1000.0:0.#}W"
                     : $"Supply offers up to {mw / 1000.0:0.#}W";
                 _tray.ShowBalloonTip(5000, "Charger connected", now, Forms.ToolTipIcon.None);
             }

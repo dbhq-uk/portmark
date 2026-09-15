@@ -147,9 +147,9 @@ public partial class PopoverWindow : Window
         }, "Caption"));
 
         Items.Children.Add(Card(Row("IconWarn", stack, "Warn"),
-            "Portmark asked this PC's port controller what it can report. The controller itself "
-          + "declares that cable identification is not supported in its firmware, so no cable can "
-          + "ever be described on this machine, by any software. Your cables are fine."));
+            "portmark asked this PC's port controller what it can report. The controller itself "
+          + "declares that cable identification is not supported in its firmware, so it cannot "
+          + "describe any cable. That is a limit of this PC, not a sign that a cable is faulty."));
     }
 
     /// <summary>
