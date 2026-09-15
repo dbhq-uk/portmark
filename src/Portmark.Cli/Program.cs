@@ -50,6 +50,7 @@ internal static class Program
             "usb" => UsbDevices(),
             "tree" => UsbTree(),
             "power" => PowerBudgetReport(),
+            "battery" => Battery(args),
             "watch" => Watch(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
             "enable" => SetTestInterface(enabled: true),
@@ -184,6 +185,10 @@ internal static class Program
     {
         Console.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
         Console.WriteLine();
+
+        // Battery IOCTLs need no setup either, so the batteries are shown whatever the port
+        // controller can do.
+        PrintBatteries(report.Machine.Batteries, report.Machine.BatteriesNote);
 
         // Billboard data needs no setup, so it is worth showing even when the UCSI path is not
         // available. Printing it only on the happy path threw away the one answer this machine
@@ -479,6 +484,128 @@ internal static class Program
         return ExitOk;
     }
 
+    /// <summary>
+    /// The batteries' own readings, and with --sample the average net charge flow over an
+    /// interval. Only battery IOCTLs are sent, so this never touches the port controller, and the
+    /// wait happens only when it is asked for.
+    /// </summary>
+    private static int Battery(string[] args)
+    {
+        int at = Array.IndexOf(args, "--sample");
+        if (at < 0)
+        {
+            List<BatteryReport> batteries = Portmark.Core.Power.BatteryTelemetry.ReadAll(out string? note);
+            if (args.Contains("--json"))
+                Console.WriteLine(JsonSerializer.Serialize(new { batteries, batteriesNote = note }, JsonOptions));
+            else
+                PrintBatteries(batteries, note);
+            return batteries.Any(b => b.Present) ? ExitOk : ExitUnsupported;
+        }
+
+        if (at + 1 >= args.Length || !int.TryParse(args[at + 1], out int seconds) || seconds <= 0)
+            return Fail("--sample needs a whole number of seconds, for example 'portmark battery --sample 60'.");
+
+        Console.WriteLine($"Sampling battery capacity over {seconds} seconds. Only the battery is read.");
+        Console.WriteLine();
+
+        List<Portmark.Core.Power.BatterySample> samples =
+            Portmark.Core.Power.BatteryTelemetry.Sample(TimeSpan.FromSeconds(seconds), out string? sampleNote);
+
+        List<BatteryReport> ends = samples.Select(s => s.End ?? s.Start).OfType<BatteryReport>().ToList();
+        PrintBatteries(ends, sampleNote);
+
+        foreach (Portmark.Core.Power.BatterySample s in samples)
+        {
+            Console.WriteLine(samples.Count > 1 ? $"Sample, battery {s.Index}" : "Sample");
+            Console.WriteLine($"  Interval     {s.Elapsed.TotalSeconds:0.0}s");
+            if (s.StartMilliwattHours is int start)
+                Console.WriteLine($"  Capacity     {start} mWh at the start, "
+                                + (s.EndMilliwattHours is int end ? $"{end} mWh at the end" : "not reported at the end"));
+            // A zero change is printed as no change, not as "0W": the note says why it is not a
+            // measured zero flow, and the first version printed "gaining 0.0W" beside that note.
+            if (s.AverageNetMilliwatts is int average)
+                Console.WriteLine(average == 0
+                    ? "  Average      no change in reported capacity over the interval"
+                    : $"  Average      {DescribeFlow(average)} net, averaged over the interval");
+            if (s.Note is not null)
+                Console.WriteLine($"               {Wrap(s.Note, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+            Console.WriteLine();
+        }
+
+        if (samples.Count > 0) Console.WriteLine(Wrap(Portmark.Core.Power.BatteryTelemetry.CoarseReportingNote));
+        return samples.Count > 0 ? ExitOk : ExitUnsupported;
+    }
+
+    private static void PrintBatteries(List<BatteryReport> batteries, string? note)
+    {
+        if (batteries.Count == 0)
+        {
+            if (note is not null)
+            {
+                Console.WriteLine($"Battery      {Wrap(note, 60).Replace(Environment.NewLine, Environment.NewLine + "             ")}");
+                Console.WriteLine();
+            }
+            return;
+        }
+
+        foreach (BatteryReport b in batteries)
+        {
+            string name = string.Join(", ", new[] { b.DeviceName, b.Manufacturer }.OfType<string>());
+            Console.WriteLine((batteries.Count > 1 ? $"Battery {b.Index}" : "Battery")
+                            + (name.Length > 0 ? $"  ({name})" : ""));
+
+            if (!b.Present)
+            {
+                Console.WriteLine($"  {b.Reason ?? "No battery is in this battery slot."}");
+                Console.WriteLine();
+                continue;
+            }
+
+            if (b.ChargePercent is int percent)
+                Console.WriteLine($"  Charge       {percent} percent"
+                                + (b.RemainingCapacityMilliwattHours is int left && b.FullChargeCapacityMilliwattHours is int full
+                                    ? $", {Wh(left)} of {Wh(full)}"
+                                    : ""));
+            else
+                Console.WriteLine("  Charge       not reported");
+
+            if (b.PowerState is { } state)
+            {
+                var flags = new List<string>();
+                if (state.OnExternalPower) flags.Add("on external power");
+                if (state.Charging) flags.Add("charging");
+                if (state.Discharging) flags.Add("discharging");
+                if (state.Critical) flags.Add("critical");
+                Console.WriteLine($"  State        {(flags.Count > 0 ? string.Join(", ", flags) : "no state flags set")}, as the battery reports it");
+            }
+
+            Console.WriteLine(b.RateMilliwatts switch
+            {
+                int rate and not 0 => $"  Rate         {DescribeFlow(rate)}, the battery's own charge flow, not cable power",
+                0 => "  Rate         zero as reported; some batteries report only discharging rates",
+                _ => "  Rate         not reported",
+            });
+
+            if (b.VoltageMillivolts is int mv) Console.WriteLine($"  Voltage      {mv / 1000.0:0.00}V");
+            if (b.HealthPercent is int health)
+                Console.WriteLine($"  Health       {health} percent, {Wh(b.FullChargeCapacityMilliwattHours!.Value)} full charge "
+                                + $"against {Wh(b.DesignCapacityMilliwattHours!.Value)} design, the battery's own estimate");
+            if (b.CycleCount is int cycles) Console.WriteLine($"  Cycles       {cycles}");
+            if (b.Chemistry is not null) Console.WriteLine($"  Chemistry    {b.Chemistry}");
+
+            foreach (string? text in new[] { b.Note, b.Reason })
+                if (text is not null)
+                    Console.WriteLine($"  Note         {Wrap(text, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+
+            Console.WriteLine();
+        }
+    }
+
+    private static string DescribeFlow(int milliwatts)
+        => milliwatts < 0 ? $"losing {-milliwatts / 1000.0:0.0#}W" : $"gaining {milliwatts / 1000.0:0.0#}W";
+
+    private static string Wh(int milliwattHours) => $"{milliwattHours / 1000.0:0.0} Wh";
+
     private static void PrintBillboards(PortmarkReport report)
     {
         foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
@@ -618,6 +745,9 @@ internal static class Program
             USAGE
               portmark                 read all ports, print JSON
               portmark --human         read all ports, print plain English
+              portmark battery         read the batteries' own charge, rate and health
+              portmark battery --sample SECONDS
+                                       also average the battery's net charge flow over SECONDS
               portmark enable          switch on the port controller interface (needs admin, once)
               portmark disable         switch it back off (needs admin)
 
