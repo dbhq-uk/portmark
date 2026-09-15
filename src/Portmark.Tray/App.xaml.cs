@@ -174,7 +174,7 @@ public partial class App : System.Windows.Application
 
         try
         {
-            PortmarkReport report = Portmark.Core.PortmarkReader.Read();
+            PortmarkReport report = Portmark.Core.PortmarkReader.Read(requestIdentity: false);
             ConnectorReport? charging = report.Connectors
                 .FirstOrDefault(c => c.Connected == true && c.PowerDirection == "consuming");
 

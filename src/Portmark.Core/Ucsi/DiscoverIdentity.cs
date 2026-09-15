@@ -29,12 +29,18 @@ public static class PdMessage
     /// <summary>
     /// Null when GET_PD_MESSAGE may be sent; otherwise the reason it is not, in words for the user.
     ///
-    /// All three conditions are required, and an unknown counts as not met. Linux gates on the
+    /// All four conditions are required, and an unknown counts as not met. Linux gates on the
     /// feature bit alone. That is not enough here: a bit that is undefined in the controller's own
     /// UCSI version is not an offer, and this machine's controller has been wedged by commands it
     /// did not expect.
+    ///
+    /// The fourth is a PD contract. Discover Identity is a USB Power Delivery message, so it is only
+    /// asked for where GET_CONNECTOR_STATUS reports the Power Operation Mode as USB Power Delivery
+    /// (UCSI value 3, Linux UCSI_CONSTAT_PWR_OPMODE_PD). A port on Type-C current or BC 1.2 is not
+    /// asked, and the mode it reports is the reason given.
     /// </summary>
-    public static string? WhyNotAsk(ushort? ucsiVersion, PpmFeatureReport? features, bool? connected)
+    public static string? WhyNotAsk(ushort? ucsiVersion, PpmFeatureReport? features, bool? connected,
+                                    string? powerOperationMode)
     {
         if (ucsiVersion is not ushort version || features is null)
             return "The port controller's UCSI version or optional features could not be read, so the "
@@ -63,6 +69,15 @@ public static class PdMessage
 
         if (connected == false)
             return "Nothing is attached, so there is nothing to ask to identify itself.";
+
+        if (powerOperationMode is null)
+            return "The port's power operation mode could not be read, so whether it is operating under USB Power "
+                 + "Delivery is not known, and the attached device and cable were not asked to identify themselves.";
+
+        if (powerOperationMode != ConnectorStatus.PowerOperationModeName(3))
+            return $"The port controller reports this port's power operation mode as {powerOperationMode}, not USB Power "
+                 + "Delivery. Discover Identity is a USB Power Delivery message, so the attached device and cable were "
+                 + "not asked to identify themselves.";
 
         return null;
     }
@@ -433,16 +448,18 @@ public static class DiscoverIdentity
             return report;
         }
 
+        // Device Capability, bits 27-24, is a bit field: 0001b USB2.0 Device Capable, 0010b USB2.0
+        // Device Capable (Billboard only), 0100b USB3.2 Device Capable, 1000b USB4 Device Capable
+        // (Linux pd_vdo.h PD_VDO_UFP_DEVCAP with DEV_USB2_CAPABLE BIT(0), DEV_USB2_BILLBOARD BIT(1),
+        // DEV_USB3_CAPABLE BIT(2), DEV_USB4_CAPABLE BIT(3)). The first version read bits 25-24 as a
+        // single two-bit code, which swapped the two USB 2.0 meanings and called both set reserved.
         report.Usb4DeviceCapable = Bit(v, 27);
         report.Usb32DeviceCapable = Bit(v, 26);
-        int usb2 = (int)((v >> 24) & 3);
-        report.Usb20DeviceCapability = usb2 switch
-        {
-            0 => Defined(usb2, "not USB 2.0 capable"),
-            1 => Defined(usb2, "USB 2.0 as a Billboard device only"),
-            2 => Defined(usb2, "USB 2.0 capable"),
-            _ => Reserved(usb2, 2, "USB PD R3.2 tells a receiver to take it as not USB 2.0 capable"),
-        };
+        report.Usb20DeviceCapableBillboardOnly = Bit(v, 25);
+        report.Usb20DeviceCapable = Bit(v, 24);
+
+        // Bits 23-22 are not read. Linux's pd_vdo.h, written against USB PD 3.0, shows Connector
+        // Type there; the connector type is decoded from the ID Header (bits 22-21) instead.
 
         report.NonReconfiguringAlternateModesSupported = Bit(v, 5);
         report.ReconfiguringAlternateModesSupported = Bit(v, 4);
@@ -756,7 +773,11 @@ public static class DiscoverIdentity
         if (r.IdHeader is not { } id) return null;
 
         var parts = new List<string>();
-        string ids = $"vendor ID {id.VendorId}" + (r.Product is { } p ? $", product ID {p.ProductId}" : "");
+        // The registered name says who holds the number the device or cable declared, not who made it.
+        string vendor = id.VendorName is { } registered
+            ? $"vendor ID {id.VendorId} (registered to {registered})"
+            : $"vendor ID {id.VendorId}";
+        string ids = vendor + (r.Product is { } p ? $", product ID {p.ProductId}" : "");
 
         if (r.PassiveCable is { } passive)
         {

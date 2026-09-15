@@ -742,7 +742,8 @@ public sealed class IdentityReport
 {
     /// <summary>
     /// Whether GET_PD_MESSAGE was sent. False is the usual answer: it is only sent when the
-    /// controller reports UCSI 1.2 or later, advertises the command, and something is attached.
+    /// controller reports UCSI 1.2 or later, advertises the command, something is attached, the
+    /// port reports a USB Power Delivery power operation mode, and the read asked for identity.
     /// </summary>
     public bool Requested { get; set; }
 
@@ -825,6 +826,13 @@ public sealed class IdHeaderReport
     public IdentityCode? ProductTypeDfp { get; set; }
     public IdentityCode? ConnectorType { get; set; }
     public string VendorId { get; set; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number the device or cable declared, not proof of who made it.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     public string Raw { get; set; } = "";
 }
 
@@ -835,12 +843,28 @@ public sealed class ProductVdoReport
     public string Raw { get; set; } = "";
 }
 
+/// <summary>
+/// UFP VDO, USB PD R3.2 Table 6.40. Device Capability (bits 27-24) is four independent flags, so it
+/// is reported as four booleans rather than one code.
+/// </summary>
 public sealed class UfpVdoReport
 {
     public IdentityCode VdoVersion { get; set; } = new();
+
+    /// <summary>Device Capability bit 27 (1000b).</summary>
     public bool? Usb4DeviceCapable { get; set; }
+
+    /// <summary>Device Capability bit 26 (0100b).</summary>
     public bool? Usb32DeviceCapable { get; set; }
-    public IdentityCode? Usb20DeviceCapability { get; set; }
+
+    /// <summary>Device Capability bit 24 (0001b): USB 2.0 device capable.</summary>
+    public bool? Usb20DeviceCapable { get; set; }
+
+    /// <summary>
+    /// Device Capability bit 25 (0010b): USB 2.0 device capable as a Billboard device only. A flag
+    /// of its own, not a second value of bit 24, and both may be set.
+    /// </summary>
+    public bool? Usb20DeviceCapableBillboardOnly { get; set; }
     public bool? NonReconfiguringAlternateModesSupported { get; set; }
     public bool? ReconfiguringAlternateModesSupported { get; set; }
     public bool? Tbt3AlternateModeSupported { get; set; }
