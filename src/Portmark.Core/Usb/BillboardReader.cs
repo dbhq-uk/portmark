@@ -169,7 +169,11 @@ public static class BillboardReader
         if (totalLength <= 5 || totalLength > 4096) return null;
 
         byte[]? bos = GetDescriptor(hub, port, DescriptorTypeBos, totalLength);
-        if (bos is null || bos.Length < totalLength) return null;
+        if (bos is null) return null;
+
+        // Fewer bytes than the header promised are still parsed: a Billboard capability that starts
+        // inside what came back is reported as truncated rather than dropped. One that would start
+        // past the end cannot be seen at all, and is not guessed at.
 
         return ParseBillboard(bos, vid, pid);
     }
@@ -207,43 +211,59 @@ public static class BillboardReader
     /// bPreferredAlternateOrUSB4Mode(1), VCONNPower(2), bmConfigured(32), bcdVersion(2),
     /// bAdditionalFailureInfo(1), bReserved(1), then four bytes per mode: wSVID(2),
     /// bAlternateOrUSB4Mode(1), iAlternateOrUSB4ModeString(1).
+    ///
+    /// A capability cut short, by the bytes returned or by its own bLength, is parsed as far as it
+    /// goes and marked truncated. The first version stopped quietly, so a partial mode list read
+    /// exactly like a complete one, and a short fixed part made the adapter vanish.
     /// </summary>
-    private static BillboardReport? ParseBillboard(byte[] bos, ushort vid, ushort pid)
+    public static BillboardReport? ParseBillboard(byte[] bos, ushort vid, ushort pid)
     {
         int offset = 5;   // past the BOS header
 
         while (offset + 3 <= bos.Length)
         {
             byte length = bos[offset];
-            if (length < 3 || offset + length > bos.Length) break;
+            if (length < 3) break;
 
             if (bos[offset + 1] == DescriptorTypeDeviceCapability &&
                 bos[offset + 2] == CapabilityTypeBillboard)
             {
-                return ParseCapability(bos.AsSpan(offset, length), vid, pid);
+                int available = Math.Min(length, bos.Length - offset);
+                return ParseCapability(bos.AsSpan(offset, available), length, vid, pid);
             }
 
+            if (offset + length > bos.Length) break;
             offset += length;
         }
 
         return null;
     }
 
-    private static BillboardReport? ParseCapability(ReadOnlySpan<byte> cap, ushort vid, ushort pid)
+    private static BillboardReport ParseCapability(ReadOnlySpan<byte> cap, int declaredLength, ushort vid, ushort pid)
     {
         const int modesOffset = 44;   // 3 header + 1 + 1 + 1 + 2 + 32 + 2 + 1 + 1
-        if (cap.Length < modesOffset) return null;
-
-        int modeCount = cap[4];
-        int preferred = cap[5];
-        ReadOnlySpan<byte> configured = cap.Slice(8, 32);
+        bool cutShort = cap.Length < declaredLength;
 
         var report = new BillboardReport
         {
             VendorId = $"0x{vid:X4}",
             ProductId = $"0x{pid:X4}",
-            PreferredModeIndex = preferred,
+            PreferredModeIndex = cap.Length > 5 ? cap[5] : null,
         };
+
+        if (cap.Length < modesOffset)
+        {
+            report.Truncated = true;
+            report.TruncationNote = cutShort
+                ? $"The Billboard capability descriptor is {declaredLength} bytes long, but only "
+                + $"{cap.Length} were returned, which stops before its list of modes. No modes could be read."
+                : $"The Billboard capability descriptor gives its length as {declaredLength} bytes, "
+                + "too short to reach its list of modes. No modes could be read.";
+            return report;
+        }
+
+        int modeCount = cap[4];
+        ReadOnlySpan<byte> configured = cap.Slice(8, 32);
 
         for (int i = 0; i < modeCount; i++)
         {
@@ -266,6 +286,15 @@ public static class BillboardReader
             });
         }
 
+        if (report.Modes.Count < modeCount)
+        {
+            report.Truncated = true;
+            report.TruncationNote =
+                $"The Billboard capability declares {modeCount} mode(s), but "
+              + (cutShort ? "the bytes returned" : "its own length field")
+              + $" only cover {report.Modes.Count}. The list of modes is incomplete.";
+        }
+
         report.CarriesVideo = report.Modes.Any(m => m.IsDisplayPort && m.Entered);
         report.SupportsVideo = report.Modes.Any(m => m.IsDisplayPort);
         return report;
@@ -276,14 +305,20 @@ public static class BillboardReader
     {
         SvidDisplayPort => "DisplayPort Alternate Mode",
         0x8087 => "Intel Thunderbolt 3",
+        0x17EF => "Lenovo vendor mode",
         0xFF00 => "USB Type-C Bridge",
         _ => $"vendor-specific SVID 0x{svid:X4}",
     };
 
+    /// <summary>
+    /// bmConfigured's two bits per mode, as the Billboard specification defines them. 01b covers a
+    /// mode that was never attempted and one that was entered and has since exited; the first
+    /// version said only "not attempted", which is wrong for an adapter that left a mode.
+    /// </summary>
     private static string StateName(int state) => state switch
     {
         0 => "unspecified error",
-        1 => "not attempted",
+        1 => "not attempted or exited",
         2 => "attempted but failed",
         3 => "entered successfully",
         _ => "unknown",

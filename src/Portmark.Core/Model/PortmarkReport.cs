@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Portmark.Core.Usb;
 
 namespace Portmark.Core.Model;
 
@@ -12,7 +13,11 @@ namespace Portmark.Core.Model;
 public sealed class PortmarkReport
 {
     public string Tool { get; init; } = "portmark";
-    public string SchemaVersion { get; init; } = "1";
+    /// <summary>
+    /// "2" since the changes listed in CHANGELOG.md: several fields became nullable and some values
+    /// changed meaning, so a consumer written against "1" should check it.
+    /// </summary>
+    public string SchemaVersion { get; init; } = "2";
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public MachineReport Machine { get; init; } = new();
     public CapabilityReport Capability { get; init; } = new();
@@ -32,6 +37,116 @@ public sealed class MachineReport
     public string? BiosVersion { get; init; }
     public string? OsVersion { get; init; }
     public string? OsDisplayVersion { get; init; }
+
+    /// <summary>
+    /// Battery charge as a percentage, null when there is no battery or Windows does not know.
+    /// Read only to tell a nearly full battery, which correctly draws very little, apart from one
+    /// that is not full and still is not gaining.
+    /// </summary>
+    public int? BatteryPercent { get; init; }
+
+    /// <summary>
+    /// Every battery device Windows lists, read through the battery class IOCTLs. Empty when
+    /// there is none, and <see cref="BatteriesNote"/> then says whether that is because Windows
+    /// lists none or because the list could not be read.
+    /// </summary>
+    public List<BatteryReport> Batteries { get; init; } = [];
+    public string? BatteriesNote { get; init; }
+}
+
+/// <summary>
+/// One battery as its own fuel gauge describes it, from BATTERY_INFORMATION and BATTERY_STATUS.
+///
+/// The rate is the battery's net charge flow, positive while it gains charge and negative while it
+/// loses it. It is not the power arriving through a USB-C cable: the machine's own load sits
+/// between the two, so a charger can be delivering 15W while the battery reports -8W.
+/// </summary>
+public sealed class BatteryReport
+{
+    public int Index { get; init; }
+
+    /// <summary>False when the battery device is a slot with no battery in it.</summary>
+    public bool Present { get; init; }
+
+    public string? DeviceName { get; init; }
+    public string? Manufacturer { get; init; }
+    public string? Chemistry { get; init; }
+
+    /// <summary>BATTERY_SYSTEM_BATTERY: the battery can run the system. Null when unread.</summary>
+    public bool? IsSystemBattery { get; init; }
+
+    /// <summary>BATTERY_IS_SHORT_TERM: a fail-safe battery such as a UPS. Null when unread.</summary>
+    public bool? IsShortTerm { get; init; }
+
+    /// <summary>
+    /// BATTERY_CAPACITY_RELATIVE: capacity and rate are in arbitrary units. Every milliwatt-hour
+    /// and milliwatt field is then null, because a relative 200 is not 200 mW.
+    /// </summary>
+    public bool CapacityRelative { get; init; }
+
+    /// <summary>The PowerState flags as the battery set them. Null when the status was not read.</summary>
+    public BatteryPowerStateReport? PowerState { get; init; }
+
+    public int? RemainingCapacityMilliwattHours { get; init; }
+    public int? FullChargeCapacityMilliwattHours { get; init; }
+    public int? DesignCapacityMilliwattHours { get; init; }
+
+    /// <summary>Signed: negative while discharging. Null when BATTERY_UNKNOWN_RATE or relative.</summary>
+    public int? RateMilliwatts { get; init; }
+    public int? VoltageMillivolts { get; init; }
+
+    /// <summary>Remaining over full-charge capacity. Valid for relative batteries too.</summary>
+    public int? ChargePercent { get; init; }
+
+    /// <summary>Full-charge capacity over design capacity, as a percentage.</summary>
+    public int? HealthPercent { get; init; }
+    public string? HealthNote { get; init; }
+
+    /// <summary>Null when the battery does not count cycles, which it reports as zero.</summary>
+    public int? CycleCount { get; init; }
+
+    /// <summary>What limits how the numbers above may be read.</summary>
+    public string? Note { get; init; }
+
+    /// <summary>Why something could not be read, when a query failed.</summary>
+    public string? Reason { get; init; }
+
+    public BatteryRawReport Raw { get; init; } = new();
+
+    /// <summary>
+    /// The device interface path, kept only to pair a sample's two readings of the same battery.
+    /// Not serialised: it identifies the machine and adds nothing a reader can check.
+    /// </summary>
+    [JsonIgnore]
+    public string? DevicePath { get; set; }
+
+    /// <summary>
+    /// True when the device did not answer the tag query or could not be opened, so whether it holds
+    /// a battery is unknown. <see cref="Present"/> is false then too, and <see cref="Reason"/> says why.
+    /// </summary>
+    [JsonIgnore]
+    public bool Unanswered { get; init; }
+}
+
+public sealed class BatteryPowerStateReport
+{
+    public int Flags { get; init; }
+
+    /// <summary>BATTERY_POWER_ON_LINE: the system has access to external power.</summary>
+    public bool OnExternalPower { get; init; }
+    public bool Discharging { get; init; }
+    public bool Charging { get; init; }
+    public bool Critical { get; init; }
+}
+
+/// <summary>The structures exactly as returned, so the decoding can be redone.</summary>
+public sealed class BatteryRawReport
+{
+    public string? InformationHex { get; init; }
+    public string? StatusHex { get; init; }
+
+    /// <summary>The battery tag the readings were taken under. Windows changes it when the battery does.</summary>
+    public uint? Tag { get; set; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -66,6 +181,13 @@ public sealed class CapabilityReport
     public bool TestInterfaceEnabled { get; set; }
     public bool TestInterfacePublished { get; set; }
     public string? UcsiVersion { get; set; }
+
+    /// <summary>
+    /// The VERSION register as read, for decisions that depend on it. Not serialised: the formatted
+    /// <see cref="UcsiVersion"/> already carries it, and the schema is unchanged.
+    /// </summary>
+    [JsonIgnore]
+    public ushort? UcsiVersionBcd { get; set; }
     public int? ConnectorCount { get; set; }
 
     /// <summary>
@@ -81,6 +203,13 @@ public sealed class PpmFeatureReport
     public bool CableDetailsAvailable { get; init; }
     public bool AlternateModeDetailsAvailable { get; init; }
     public bool PowerDataObjectDetailsAvailable { get; init; }
+
+    /// <summary>
+    /// bmOptionalFeatures bit 8, defined from UCSI 1.2. Clear means the controller will answer
+    /// GET_PD_MESSAGE with Not Supported, so the attached device and cable cannot be asked for
+    /// their Discover Identity through it.
+    /// </summary>
+    public bool GetPdMessageSupported { get; init; }
     public bool SupportsUsbPowerDelivery { get; init; }
     public bool SupportsBatteryCharging { get; init; }
     public int AlternateModeCount { get; init; }
@@ -98,21 +227,73 @@ public sealed class ConnectorReport
     public bool? Connected { get; set; }
 
     public string? PartnerType { get; set; }
+
+    /// <summary>
+    /// The connector partner flags from GET_CONNECTOR_STATUS (bits 21-28), raw, and the one bit
+    /// that matters here: bit 1, set when the partner is operating in an alternate mode. This is
+    /// current operation, where the mode lists are only what is supported. Null when nothing is
+    /// attached or the status could not be read.
+    /// </summary>
+    public int? PartnerFlags { get; set; }
+    public bool? PartnerAlternateModeFlag { get; set; }
+
+    /// <summary>
+    /// The controller's own view of the charging rate, from bits 64 and 65 of the connector
+    /// status. This is the field Windows drives its slow-charging notification from. Microsoft
+    /// notes that firmware often leaves it at zero rather than meaning "not charging", so a zero
+    /// is reported as the controller's word and never taken as proof the battery is idle.
+    /// </summary>
+    public int? BatteryChargingStatusCode { get; set; }
+    public string? BatteryChargingStatus { get; set; }
     public string? PowerOperationMode { get; set; }
     public string? PowerDirection { get; set; }
     /// <summary>What the connector itself supports, as distinct from what is attached to it.</summary>
     public ConnectorCapabilityReport? Capability { get; set; }
 
     /// <summary>
-    /// Which alternate mode index is currently active, when the controller reports one. Knowing a
-    /// mode is active is not the same as knowing which: identifying it needs GET_ALTERNATE_MODES,
-    /// which some controllers advertise but decline.
+    /// The alternate modes this port itself can enter, from GET_ALTERNATE_MODES with the connector
+    /// as recipient. Null when the controller does not advertise alternate mode details, so the
+    /// question was never asked.
+    /// </summary>
+    public AlternateModeListReport? SupportedAlternateModes { get; set; }
+
+    /// <summary>
+    /// The alternate modes the attached partner offers (recipient SOP). Null when nothing is
+    /// attached, or when attachment could not be read, so the partner was never asked.
+    /// </summary>
+    public AlternateModeListReport? PartnerAlternateModes { get; set; }
+
+    /// <summary>
+    /// The offset of the mode in use, and only that: null unless <see cref="ActiveAlternateMode"/>
+    /// is set. The raw GET_CURRENT_CAM byte lives in <see cref="RawReport.CurrentCamHex"/>. This
+    /// controller returns 0 for an empty port, so that byte alone is not evidence of activity,
+    /// and the first release wrongly reported it as such.
     /// </summary>
     public int? ActiveAlternateModeIndex { get; set; }
     public int? SupportedAlternateModeBitmap { get; set; }
+
+    /// <summary>
+    /// The mode the controller names as current, when it names one. Read it with
+    /// <see cref="ActiveAlternateModeConfirmed"/>: on a controller that never describes the
+    /// attached partner, this is the controller's word and nothing else.
+    /// </summary>
+    public PortAlternateModeReport? ActiveAlternateMode { get; set; }
+
+    /// <summary>
+    /// True when something other than the controller's index agrees the mode is in use: either
+    /// the partner listed that mode, or the connector status says an alternate mode is in
+    /// operation. False means the mode above is unconfirmed, and it is printed as such.
+    /// </summary>
+    public bool ActiveAlternateModeConfirmed { get; set; }
     public string? AlternateModeNote { get; set; }
 
     public CableReport Cable { get; set; } = new();
+
+    /// <summary>
+    /// What the attached device and cable declare through Discover Identity. Null only when the
+    /// connector was never read; otherwise it says whether the question was asked and why not.
+    /// </summary>
+    public IdentityReport? Identity { get; set; }
 
     /// <summary>
     /// What the attached supply offers and what was actually negotiated. Available on controllers
@@ -137,13 +318,33 @@ public sealed class CableReport
     /// <summary>Why there is no data, when there is none.</summary>
     public string? Reason { get; set; }
 
+    /// <summary>
+    /// What the power contract implies about the cable when the cable itself cannot be read. Null
+    /// unless something can be concluded. Kept in its own object so it can never be mistaken for
+    /// a field the cable reported: everything above this line is the cable's own words, and
+    /// everything inside it is deduction from someone else's.
+    /// </summary>
+    public CableInferenceReport? Inferred { get; set; }
+
     public SpeedReport? Speed { get; set; }
     public int? CurrentCapabilityMilliamps { get; set; }
     public int? MaxWattsAt20Volts { get; set; }
     public string? PlugType { get; set; }
     public bool? ActiveCable { get; set; }
     public bool? VbusInCable { get; set; }
+
+    /// <summary>
+    /// UCSI Directionality, byte 3 bit 2: true when the cable's lane directionality is
+    /// configurable, false when it is fixed in the cable.
+    /// </summary>
+    public bool? LaneDirectionalityConfigurable { get; set; }
+
+    /// <summary>
+    /// UCSI Mode Support. Only valid for an active cable, so it is null for a passive one, with
+    /// <see cref="AlternateModeSupportNote"/> saying why.
+    /// </summary>
     public bool? SupportsAlternateModes { get; set; }
+    public string? AlternateModeSupportNote { get; set; }
     public int? LatencyCode { get; set; }
 
     /// <summary>
@@ -184,6 +385,15 @@ public sealed class PowerReport
 
     /// <summary>Highest power the attached supply offers, in milliwatts.</summary>
     public int? MaxAvailableMilliwatts { get; set; }
+
+    /// <summary>
+    /// True when this PC is drawing power and took less than half of what the supply offers. A
+    /// measurement, not a verdict: a nearly full battery draws little and that is correct.
+    /// </summary>
+    public bool IsUnderNegotiated { get; set; }
+
+    /// <summary>Plain English account of the gap, null when there is nothing to explain.</summary>
+    public string? PowerDiagnosis { get; set; }
 }
 
 public sealed class PowerObjectReport
@@ -199,15 +409,58 @@ public sealed class PowerObjectReport
     public bool? DualRolePower { get; init; }
     public string Display { get; init; } = "";
     public string Raw { get; init; } = "";
+
+    /// <summary>
+    /// The object's position in the source's list, counting from one, as a Request names it.
+    /// Kept because empty slots are not listed, so the index in this list is not the position.
+    /// </summary>
+    public int? Position { get; init; }
+
+    /// <summary>PPS only: the PPS Power Limited bit, B27. Null for every other kind.</summary>
+    public bool? PowerLimited { get; init; }
+
+    /// <summary>Adjustable (AVS) only: true for EPR AVS, false for SPR AVS.</summary>
+    public bool? ExtendedPowerRange { get; init; }
+
+    /// <summary>SPR AVS only: the 15-20V current. Null when the object offers nothing above 15V.</summary>
+    public int? MaxCurrent15To20VoltsMilliamps { get; init; }
+
+    /// <summary>EPR AVS only: the PDP the object states, in milliwatts.</summary>
+    public int? PdpMilliwatts { get; init; }
 }
 
+/// <summary>
+/// A decoded Request Data Object. Which fields are set depends on the kind of object the request
+/// selects; a field the layout does not carry is null, and when the selected object was not read
+/// every layout-dependent field is null.
+/// </summary>
 public sealed class RequestReport
 {
     public int ObjectPosition { get; init; }
-    public int OperatingCurrentMilliamps { get; init; }
-    public int MaxOperatingCurrentMilliamps { get; init; }
+    public int? OperatingCurrentMilliamps { get; init; }
+    public int? MaxOperatingCurrentMilliamps { get; init; }
     public int? SelectedVoltageMillivolts { get; init; }
     public int? NegotiatedPowerMilliwatts { get; init; }
+
+    /// <summary>The kind of the selected object, or null when it was not read or not recognised.</summary>
+    public string? SelectedKind { get; init; }
+
+    /// <summary>Fixed and variable with GiveBack set: the minimum operating current.</summary>
+    public int? MinOperatingCurrentMilliamps { get; init; }
+
+    /// <summary>Battery only: operating, maximum and (with GiveBack) minimum power.</summary>
+    public int? OperatingPowerMilliwatts { get; init; }
+    public int? MaxOperatingPowerMilliwatts { get; init; }
+    public int? MinOperatingPowerMilliwatts { get; init; }
+
+    /// <summary>PPS and AVS only: the output voltage the sink asked for.</summary>
+    public int? OutputVoltageMillivolts { get; init; }
+
+    /// <summary>Fixed, variable and battery only: B27. Reserved, so null, in PPS and AVS requests.</summary>
+    public bool? GiveBack { get; init; }
+
+    /// <summary>B26: the sink says the offer does not meet its needs.</summary>
+    public bool CapabilityMismatch { get; init; }
     public string Display { get; init; } = "";
     public string Raw { get; init; } = "";
 }
@@ -230,6 +483,98 @@ public sealed class RawReport
     public string? ConnectorStatusCci { get; set; }
     public string? CablePropertyCci { get; set; }
     public string? PartnerSourcePdosHex { get; set; }
+    public string? CurrentCamHex { get; set; }
+    public string? CurrentCamCci { get; set; }
+
+    /// <summary>
+    /// Every GET_ALTERNATE_MODES request made for this connector, in order, recorded before any
+    /// interpretation. Failed requests are kept too: an empty list and a refused list must stay
+    /// distinguishable by anyone re-reading the bytes.
+    /// </summary>
+    public List<UcsiExchangeReport> AlternateModeExchanges { get; set; } = [];
+
+    /// <summary>
+    /// Every GET_PDOS request made for this connector, in order, including a second page that was
+    /// refused or empty, so where a list stopped can be checked.
+    /// </summary>
+    public List<UcsiExchangeReport> PdoExchanges { get; set; } = [];
+
+    /// <summary>
+    /// Every GET_PD_MESSAGE request made for this connector, in order, recorded before any
+    /// interpretation. Empty when the controller does not offer the command, because then it is
+    /// never sent, and <see cref="IdentityReport.Reason"/> says so.
+    /// </summary>
+    public List<UcsiExchangeReport> PdMessageExchanges { get; set; } = [];
+}
+
+/// <summary>
+/// What the power contract says about the cable. Not the cable's own words: a deduction from the
+/// supply's advertisement, stated with the evidence it rests on and the ambiguity it cannot
+/// resolve. This is the one place portmark concludes something it was not told directly, and it
+/// says so in every field.
+/// </summary>
+public sealed class CableInferenceReport
+{
+    /// <summary>The current the cable must be able to carry, in milliamps.</summary>
+    public int? MinimumCurrentRatingMilliamps { get; set; }
+
+    /// <summary>What was observed.</summary>
+    public string Evidence { get; set; } = "";
+
+    /// <summary>The rule that makes the observation mean something.</summary>
+    public string Basis { get; set; } = "";
+
+    /// <summary>What follows, and what does not.</summary>
+    public string Conclusion { get; set; } = "";
+}
+
+/// <summary>One UCSI request and its answer, exactly as exchanged.</summary>
+public sealed class UcsiExchangeReport
+{
+    public string Command { get; init; } = "";
+    public string ControlHex { get; init; } = "";
+    public string? Cci { get; init; }
+    public string? PayloadHex { get; init; }
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// One list of alternate modes as enumerated over UCSI. An empty <see cref="Modes"/> with
+/// <see cref="Complete"/> true is a real answer: the controller listed nothing. An empty list with
+/// <see cref="DataAvailable"/> false is not an answer, and <see cref="Reason"/> says what happened.
+/// A non-empty list with <see cref="Complete"/> false is a prefix: the controller stopped
+/// answering, or stopped moving, part way through.
+/// </summary>
+public sealed class AlternateModeListReport
+{
+    public bool DataAvailable { get; set; }
+    public bool Complete { get; set; }
+    public string? Reason { get; set; }
+    public List<PortAlternateModeReport> Modes { get; set; } = [];
+}
+
+/// <summary>
+/// One alternate mode as UCSI lists it: an SVID and the 32-bit "MID" the controller returned.
+/// UCSI calls the second field a mode ID; Linux treats it as the mode's Discover Modes VDO, and
+/// that is the only interoperable reading. It is kept raw. This controller returns 0x00000001 for
+/// Thunderbolt (the TBT mode bit) and 0x00000003 for DisplayPort (DFP_D and UFP_D capable, no
+/// pin assignments), which are abbreviated VDOs at best, so nothing is derived from them.
+/// </summary>
+public sealed class PortAlternateModeReport
+{
+    public int Offset { get; init; }
+    public string Svid { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="Svid"/> as a USB vendor ID, null when it is a Standard ID
+    /// such as DisplayPort or the vendor list does not name it. Who holds the number, not proof of
+    /// who made anything.
+    /// </summary>
+    public string? VendorName => VendorNames.ForSvid(Svid);
+
+    public string Name { get; init; } = "";
+    public string ModeId { get; init; } = "";
+    public bool IsDisplayPort { get; init; }
 }
 
 /// <summary>
@@ -239,8 +584,17 @@ public sealed class RawReport
 public sealed class BillboardReport
 {
     public string VendorId { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number, not proof of who made the adapter.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     public string ProductId { get; init; } = "";
-    public int PreferredModeIndex { get; init; }
+
+    /// <summary>bPreferredAlternateOrUSB4Mode. Null when the descriptor was cut short before it.</summary>
+    public int? PreferredModeIndex { get; init; }
     public List<AlternateModeReport> Modes { get; init; } = [];
 
     /// <summary>True when a DisplayPort alternate mode is present and was entered successfully.</summary>
@@ -248,12 +602,30 @@ public sealed class BillboardReport
 
     /// <summary>True when DisplayPort is offered at all, whether or not it was entered.</summary>
     public bool SupportsVideo { get; set; }
+
+    /// <summary>
+    /// True when the capability descriptor ended before the modes it declares, so
+    /// <see cref="Modes"/> is a prefix. While true, false for <see cref="SupportsVideo"/> and
+    /// <see cref="CarriesVideo"/> means only that DisplayPort was not in the part that was read.
+    /// </summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>What was declared and what could be read, when <see cref="Truncated"/>.</summary>
+    public string? TruncationNote { get; set; }
 }
 
 public sealed class AlternateModeReport
 {
     public int Index { get; init; }
     public string Svid { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="Svid"/> as a USB vendor ID, null when it is a Standard ID
+    /// such as DisplayPort or the vendor list does not name it. Who holds the number, not proof of
+    /// who made anything.
+    /// </summary>
+    public string? VendorName => VendorNames.ForSvid(Svid);
+
     public string Name { get; init; } = "";
     public int ModeNumber { get; init; }
     public string State { get; init; } = "";
@@ -268,6 +640,15 @@ public sealed class AlternateModeReport
 public sealed class UsbDeviceReport
 {
     public string VendorId { get; init; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number, not proof of who made the device: products ship under the ID of
+    /// the chip inside them, and a device can report any ID. The device's own claim is
+    /// <see cref="Manufacturer"/>, which can disagree with this and is not corrected by it.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     public string ProductId { get; init; } = "";
     public string? Manufacturer { get; init; }
     public string? Product { get; init; }
@@ -287,24 +668,42 @@ public sealed class UsbDeviceReport
     public string HubPath { get; init; } = "";
 
     /// <summary>
-    /// True when the device negotiated a slower link than its own declared USB version allows.
-    /// The usual cause is a USB 2.0 cable or hub in the chain, and nothing else on the system
-    /// tells you this is happening.
+    /// True when the device negotiated a slower link than the evidence in <see cref="LinkEvidence"/>
+    /// says it is capable of. Never set from the declared USB version, which is specification
+    /// conformance rather than speed: a full-speed-only USB 2.0 mouse is not underperforming.
     /// </summary>
     public bool IsUnderperforming { get; set; }
 
-    /// <summary>Plain English explanation of the shortfall, null when running at full capability.</summary>
+    /// <summary>Plain English explanation of the shortfall, null when nothing shows one.</summary>
     public string? LinkDiagnosis { get; set; }
 
-    /// <summary>The speed the declared USB version allows, for comparison with <see cref="Speed"/>.</summary>
+    /// <summary>
+    /// The speed the capability evidence says the device can reach, for comparison with
+    /// <see cref="Speed"/>. Null unless <see cref="IsUnderperforming"/>.
+    /// </summary>
     public string? ExpectedSpeed { get; set; }
+
+    /// <summary>
+    /// What the diagnosis rests on: the hub's report of the port's protocols and the device's
+    /// SuperSpeed capability, and the device's own BOS speed capabilities, raw and decoded.
+    /// </summary>
+    public UsbLinkEvidenceReport? LinkEvidence { get; set; }
 }
 
 /// <summary>One node in the USB device tree: a hub, or a device attached to one.</summary>
 public sealed class UsbTreeNode
 {
-    /// <summary>The device this node represents. Null for a host controller's root hub.</summary>
+    /// <summary>
+    /// The device this node represents. Null for a host controller's root hub, and for a port
+    /// listed only for its <see cref="PortStatus"/>.
+    /// </summary>
     public UsbDeviceReport? Device { get; set; }
+
+    /// <summary>
+    /// Set for a port whose hub reports a status other than empty or connected, such as a failed
+    /// enumeration. Such a port has no working device, so this is all there is to show.
+    /// </summary>
+    public UsbPortStatusReport? PortStatus { get; set; }
 
     public string Label { get; set; } = "";
     public bool IsRootHub { get; set; }
@@ -350,4 +749,328 @@ public sealed class HubPowerReport
     public bool OverSubscribed { get; init; }
 
     public string? Note { get; init; }
+}
+
+/// <summary>
+/// What the attached device and the cable say about themselves through USB PD Discover Identity,
+/// read with UCSI GET_PD_MESSAGE. Everything under here is a declaration by the device or cable,
+/// passed on, and never a measurement.
+/// </summary>
+public sealed class IdentityReport
+{
+    /// <summary>
+    /// Whether GET_PD_MESSAGE was sent. False is the usual answer: it is only sent when the
+    /// controller reports UCSI 1.2 or later, advertises the command, something is attached, the
+    /// port reports a USB Power Delivery power operation mode, and the read asked for identity.
+    /// </summary>
+    public bool Requested { get; set; }
+
+    /// <summary>Why the question was not asked, when it was not.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>The Discover Identity response from the attached device (SOP).</summary>
+    public DiscoverIdentityReport? Partner { get; set; }
+
+    /// <summary>The Discover Identity response from the cable plug (SOP').</summary>
+    public DiscoverIdentityReport? Cable { get; set; }
+}
+
+/// <summary>
+/// One Discover Identity response. <see cref="ObjectsHex"/> holds every object as returned, VDM
+/// Header first, so the decoding below it can be redone by hand.
+/// </summary>
+public sealed class DiscoverIdentityReport
+{
+    /// <summary>"SOP" for the attached device, "SOP'" for the cable plug.</summary>
+    public string Recipient { get; set; } = "";
+
+    public bool DataAvailable { get; set; }
+
+    /// <summary>
+    /// True when every object the ID Header calls for was returned in the expected layout, false
+    /// when some were not, and null when that cannot be judged.
+    /// </summary>
+    public bool? Complete { get; set; }
+
+    /// <summary>Why there is no identity, or what about this one is incomplete or undecoded.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>ACK, NAK, BUSY or REQ, from the Structured VDM Header.</summary>
+    public string? CommandType { get; set; }
+    public string? StructuredVdmVersion { get; set; }
+
+    public List<string> ObjectsHex { get; set; } = [];
+
+    public IdHeaderReport? IdHeader { get; set; }
+    public string? CertStatXid { get; set; }
+    public ProductVdoReport? Product { get; set; }
+    public UfpVdoReport? Ufp { get; set; }
+    public DfpVdoReport? Dfp { get; set; }
+    public PassiveCableVdoReport? PassiveCable { get; set; }
+    public ActiveCableVdoReport? ActiveCable { get; set; }
+
+    /// <summary>
+    /// A VCONN Powered USB Device answers on SOP' as a cable plug does, but it is not a cable, and
+    /// it is kept out of the cable fields.
+    /// </summary>
+    public VconnPoweredDeviceVdoReport? VconnPoweredDevice { get; set; }
+
+    /// <summary>The plain English sentence, worded as what the device or cable declares.</summary>
+    public string? Declaration { get; set; }
+}
+
+/// <summary>
+/// One enumerated field. <see cref="Status"/> is "defined", "reserved" (the specification gives
+/// the value no meaning, or calls it invalid) or "deprecated" (it had a meaning once, stated in
+/// <see cref="Meaning"/>). A reserved value is never mapped onto a nearby defined one.
+/// </summary>
+public sealed class IdentityCode
+{
+    public int Code { get; init; }
+    public string Meaning { get; init; } = "";
+    public string Status { get; init; } = "";
+}
+
+public sealed class IdHeaderReport
+{
+    public bool UsbHostCapable { get; set; }
+    public bool UsbDeviceCapable { get; set; }
+
+    /// <summary>Product Type (UFP) for the attached device, Product Type (Cable Plug/VPD) on SOP'.</summary>
+    public IdentityCode ProductType { get; set; } = new();
+    public bool ModalOperationSupported { get; set; }
+
+    /// <summary>Null on SOP', where the field is reserved, and in Structured VDM Version 1.0.</summary>
+    public IdentityCode? ProductTypeDfp { get; set; }
+    public IdentityCode? ConnectorType { get; set; }
+    public string VendorId { get; set; } = "";
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when it lists
+    /// none. Who holds the number the device or cable declared, not proof of who made it.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
+    public string Raw { get; set; } = "";
+}
+
+public sealed class ProductVdoReport
+{
+    public string ProductId { get; set; } = "";
+    public string BcdDevice { get; set; } = "";
+    public string Raw { get; set; } = "";
+}
+
+/// <summary>
+/// UFP VDO, USB PD R3.2 Table 6.40. Device Capability (bits 27-24) is four independent flags, so it
+/// is reported as four booleans rather than one code.
+/// </summary>
+public sealed class UfpVdoReport
+{
+    public IdentityCode VdoVersion { get; set; } = new();
+
+    /// <summary>Device Capability bit 27 (1000b).</summary>
+    public bool? Usb4DeviceCapable { get; set; }
+
+    /// <summary>Device Capability bit 26 (0100b).</summary>
+    public bool? Usb32DeviceCapable { get; set; }
+
+    /// <summary>Device Capability bit 24 (0001b): USB 2.0 device capable.</summary>
+    public bool? Usb20DeviceCapable { get; set; }
+
+    /// <summary>
+    /// Device Capability bit 25 (0010b): USB 2.0 device capable as a Billboard device only. A flag
+    /// of its own, not a second value of bit 24, and both may be set.
+    /// </summary>
+    public bool? Usb20DeviceCapableBillboardOnly { get; set; }
+    public bool? NonReconfiguringAlternateModesSupported { get; set; }
+    public bool? ReconfiguringAlternateModesSupported { get; set; }
+    public bool? Tbt3AlternateModeSupported { get; set; }
+    public bool? VbusRequired { get; set; }
+    public bool? VconnRequired { get; set; }
+    public IdentityCode? VconnPower { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class DfpVdoReport
+{
+    public IdentityCode VdoVersion { get; set; } = new();
+    public bool? Usb4HostCapable { get; set; }
+    public bool? Usb32HostCapable { get; set; }
+    public bool? Usb20HostCapable { get; set; }
+    public int? PortNumber { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class PassiveCableVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? PlugType { get; set; }
+    public bool? EprCapable { get; set; }
+    public IdentityCode? Latency { get; set; }
+    public IdentityCode? TerminationType { get; set; }
+    public IdentityCode? MaxVbusVoltage { get; set; }
+
+    /// <summary>Null unless the code is a defined one: a deprecated code is not a voltage the cable stated.</summary>
+    public int? MaxVbusVolts { get; set; }
+    public IdentityCode? CurrentHandling { get; set; }
+    public int? MaxCurrentMilliamps { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+public sealed class ActiveCableVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? PlugType { get; set; }
+    public bool? EprCapable { get; set; }
+    public IdentityCode? Latency { get; set; }
+    public IdentityCode? TerminationType { get; set; }
+    public IdentityCode? MaxVbusVoltage { get; set; }
+    public int? MaxVbusVolts { get; set; }
+    public bool? SbuSupported { get; set; }
+    public IdentityCode? SbuType { get; set; }
+    public bool? VbusThroughCable { get; set; }
+    public IdentityCode? CurrentHandling { get; set; }
+    public int? MaxCurrentMilliamps { get; set; }
+    public bool? SopDoublePrimeControllerPresent { get; set; }
+    public IdentityCode? HighestSpeed { get; set; }
+
+    // Active Cable VDO2. Null when the second VDO was not returned.
+    public int? MaxOperatingTemperatureCelsius { get; set; }
+    public int? ShutdownTemperatureCelsius { get; set; }
+    public IdentityCode? U3CldPower { get; set; }
+    public bool? U3ToU0ThroughU3S { get; set; }
+    public IdentityCode? PhysicalConnection { get; set; }
+    public IdentityCode? ActiveElement { get; set; }
+    public bool? Usb4Supported { get; set; }
+    public int? Usb2HubHopsConsumed { get; set; }
+    public bool? Usb2Supported { get; set; }
+    public bool? Usb32Supported { get; set; }
+    public IdentityCode? LanesSupported { get; set; }
+    public bool? OpticallyIsolated { get; set; }
+    public bool? Usb4AsymmetricModeSupported { get; set; }
+    public IdentityCode? UsbGen { get; set; }
+
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+    public string? Raw2 { get; set; }
+}
+
+public sealed class VconnPoweredDeviceVdoReport
+{
+    public int HardwareVersion { get; set; }
+    public int FirmwareVersion { get; set; }
+    public IdentityCode VdoVersion { get; set; } = new();
+    public IdentityCode? MaxVbusVoltage { get; set; }
+    public int? MaxVbusVolts { get; set; }
+    public bool? ChargeThroughSupported { get; set; }
+    public IdentityCode? ChargeThroughCurrent { get; set; }
+    public int? VbusImpedanceMilliohms { get; set; }
+    public int? GroundImpedanceMilliohms { get; set; }
+    public string? Note { get; set; }
+    public string Raw { get; set; } = "";
+}
+
+/// <summary>
+/// Everything one hub scan found: the attached devices, and the ports whose hub reports a status
+/// other than empty or connected.
+/// </summary>
+public sealed class UsbScanReport
+{
+    public List<UsbDeviceReport> Devices { get; init; } = [];
+
+    /// <summary>
+    /// Ports that are neither empty nor connected: failed connections, and connections still
+    /// enumerating or resetting. Empty ports are left out, and connected ones are in
+    /// <see cref="Devices"/>.
+    /// </summary>
+    public List<UsbPortStatusReport> PortStatuses { get; init; } = [];
+}
+
+/// <summary>
+/// One hub port's USB_CONNECTION_STATUS, as the hub reports it. Every statement here is the hub's,
+/// and none says what caused the status.
+/// </summary>
+public sealed class UsbPortStatusReport
+{
+    public string HubPath { get; init; } = "";
+    public int Port { get; init; }
+
+    /// <summary>The USB_CONNECTION_STATUS value, and its name in usbioctl.h.</summary>
+    public int ConnectionStatusCode { get; init; }
+    public string ConnectionStatus { get; init; } = "";
+
+    /// <summary>True for the statuses Microsoft documents as a failed connection attempt.</summary>
+    public bool IsFault { get; init; }
+
+    /// <summary>Plain English, attributed to the hub.</summary>
+    public string Description { get; init; } = "";
+
+    /// <summary>
+    /// From the device descriptor the hub returned with the status, when it returned a valid one.
+    /// Null when it did not, which after a failed enumeration is common.
+    /// </summary>
+    public string? VendorId { get; init; }
+    public string? ProductId { get; init; }
+
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when there is no
+    /// vendor ID or the list names none. Who holds the number, not proof of who made the device.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
+    /// <summary>The fixed part of USB_NODE_CONNECTION_INFORMATION_EX, so the decoding can be checked.</summary>
+    public string ConnectionInformationHex { get; init; } = "";
+}
+
+/// <summary>
+/// The readings a link diagnosis rests on. The hub's half comes from
+/// IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX_V2, the device's half from its BOS descriptor. Each
+/// half is null when it could not be read, with a reason.
+/// </summary>
+public sealed class UsbLinkEvidenceReport
+{
+    /// <summary>USB_PROTOCOLS as returned, and decoded.</summary>
+    public string? SupportedUsbProtocolsHex { get; init; }
+    public string? PortProtocols { get; init; }
+    public bool? PortSupportsUsb110 { get; init; }
+    public bool? PortSupportsUsb200 { get; init; }
+    public bool? PortSupportsUsb300 { get; init; }
+
+    /// <summary>USB_NODE_CONNECTION_INFORMATION_EX_V2_FLAGS as returned, and decoded.</summary>
+    public string? FlagsHex { get; init; }
+    public bool? OperatingAtSuperSpeedOrHigher { get; init; }
+    public bool? SuperSpeedCapableOrHigher { get; init; }
+    public bool? OperatingAtSuperSpeedPlusOrHigher { get; init; }
+    public bool? SuperSpeedPlusCapableOrHigher { get; init; }
+
+    /// <summary>
+    /// The port sharing this port's physical connector, from USB_PORT_CONNECTOR_PROPERTIES: 0 when
+    /// the hub reports none, null when it could not be read. An xHCI root hub numbers the USB 2 and
+    /// USB 3 halves of one connector separately, so this is what says whether the socket supports
+    /// USB 3 when this port number does not.
+    /// </summary>
+    public int? CompanionPortNumber { get; init; }
+    public string? CompanionSupportedUsbProtocolsHex { get; init; }
+    public string? CompanionPortProtocols { get; init; }
+
+    /// <summary>Why the hub's half is missing, when it is.</summary>
+    public string? HubReportReason { get; init; }
+
+    /// <summary>wSpeedsSupported from the SuperSpeed USB Device Capability, and both capabilities' bytes.</summary>
+    public string? BosSpeedsSupportedHex { get; init; }
+    public string? BosSuperSpeedCapabilityHex { get; init; }
+    public string? BosSuperSpeedPlusCapabilityHex { get; init; }
+
+    /// <summary>Why the device's half is missing, when it is.</summary>
+    public string? BosReason { get; init; }
 }

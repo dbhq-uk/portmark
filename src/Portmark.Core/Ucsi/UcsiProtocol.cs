@@ -46,12 +46,39 @@ public static class UcsiProtocol
     public const byte CmdGetConnectorStatus = 0x12;
     public const byte CmdGetErrorStatus = 0x13;
 
-    // CCI bits, per the UCSI specification.
-    public const uint CciBusy = 1u << 26;
-    public const uint CciAcknowledge = 1u << 27;
-    public const uint CciError = 1u << 28;
+    /// <summary>
+    /// GET_PD_MESSAGE, UCSI 1.2 and 2.0 section 4.5.20, code 0x15 (Table A-1; Linux
+    /// UCSI_GET_PD_MESSAGE). It changes no port state, which is why it belongs in this list, but
+    /// with Message Offset 0 it makes the controller send a PD request to the partner or cable, so
+    /// it is gated by <see cref="PdMessage.WhyNotAsk"/> rather than sent wherever it might work.
+    /// </summary>
+    public const byte CmdGetPdMessage = 0x15;
+
+    // GET_PD_MESSAGE Recipient, bits 23-25: 0 connector, 1 SOP, 2 SOP', 3 SOP'', 4-7 reserved.
+    public const byte PdMessageRecipientSop = 1;
+    public const byte PdMessageRecipientSopPrime = 2;
+
+    // GET_PD_MESSAGE Response Message Type, bits 42-47: 0 Sink_Capabilities_Extended, 1
+    // Source_Capabilities_Extended, 2 Battery_Capabilities, 3 Battery_Status, 4 "Discover Identity
+    // Response - ACK, NAK or BUSY (Structured VDM)", 5-63 reserved in UCSI 2.0.
+    public const byte PdMessageDiscoverIdentity = 4;
+
+    // CCI indicator bits, per UCSI Table 4-2 and Microsoft's UCSI_CCI: bits 1-7 connector change,
+    // 8-15 data length, then from bit 25 upward Not Supported, Cancel Completed, Reset Completed,
+    // Busy, Acknowledge Command, Error, Command Completed.
+    //
+    // These sat two bits low once. That misread this controller's "Not Supported" answer to
+    // GET_CABLE_PROPERTY (0x82000000) as a bare completion, and its "Error" answer to a
+    // mis-encoded GET_ALTERNATE_MODES (0xC0000000) as an empty success, and both misreadings went
+    // into the spike write-up. The undefined opcode 0x7F returns 0x82000000 too, which is the
+    // check: an unknown command must come back Not Supported.
+    public const uint CciNotSupported = 1u << 25;
+    public const uint CciCancelCompleted = 1u << 26;
+    public const uint CciResetCompleted = 1u << 27;
+    public const uint CciBusy = 1u << 28;
+    public const uint CciAcknowledge = 1u << 29;
+    public const uint CciError = 1u << 30;
     public const uint CciCommandCompleted = 1u << 31;
-    public const uint CciNotSupported = 1u << 23;
 
     /// <summary>
     /// Builds the 64-bit CONTROL value: command in bits 0-7, data length in bits 8-15, and
@@ -83,27 +110,40 @@ public static class UcsiProtocol
         CmdGetCableProperty => "GET_CABLE_PROPERTY",
         CmdGetConnectorStatus => "GET_CONNECTOR_STATUS",
         CmdGetErrorStatus => "GET_ERROR_STATUS",
+        CmdGetPdMessage => "GET_PD_MESSAGE",
         _ => $"0x{command:X2}",
     };
 
     /// <summary>
-    /// CONTROL for GET_ALTERNATE_MODES. The command-specific fields are a cumulative bit field in
-    /// the 64-bit CONTROL, not a packed byte at bit 16, so the offsets are absolute:
-    /// Recipient 16-18, ConnectorNumber 19-25, AlternateModeOffset 26-33, NumberOfAlternateModes
-    /// 34-35. Layout per the UCSI_GET_ALTERNATE_MODES_COMMAND structure Microsoft documents.
+    /// CONTROL for GET_ALTERNATE_MODES. This is the one command whose connector number is not at
+    /// bit 16. The layout is Recipient 16-18, reserved 19-23, ConnectorNumber 24-30,
+    /// AlternateModeOffset 32-39, NumberOfAlternateModes 40-41 (UCSI Table 4-17; Linux's
+    /// UCSI_GET_ALTMODE_CONNECTOR_NUMBER shifts by 24).
+    ///
+    /// The first version packed the fields contiguously from bit 19. This controller then saw
+    /// connector number zero, answered Error with "non-existent connector number", and the spike
+    /// concluded it declined the command. It does not: with the number at bit 24 it lists every
+    /// mode, and the count matches bNumAltModes from GET_CAPABILITY.
     /// Recipient: 0 connector, 1 SOP (the attached partner), 2 SOP', 3 SOP''.
     /// </summary>
     public static ulong GetAlternateModes(byte recipient, byte connector, byte offset,
                                           byte numberMinusOne = 0)
         => CmdGetAlternateModes
          | ((ulong)(recipient & 0x07) << 16)
-         | ((ulong)(connector & 0x7F) << 19)
-         | ((ulong)offset << 26)
-         | ((ulong)(numberMinusOne & 0x03) << 34);
+         | ((ulong)(connector & 0x7F) << 24)
+         | ((ulong)offset << 32)
+         | ((ulong)(numberMinusOne & 0x03) << 40);
 
     /// <summary>
     /// CONTROL for GET_PDOS. Absolute bit offsets: ConnectorNumber 16-22, PartnerPdo 23,
-    /// PdoOffset 24-31, NumberOfPdos 32-33, SourceOrSinkPdos 34, SourceCapabilitiesType 35-36.
+    /// PdoOffset 24-31, NumberOfPdos 32-33, SourceOrSinkPdos 34, SourceCapabilitiesType 35-36
+    /// (UCSI 1.2 Table 4-34). NumberOfPdos is the count minus one, and the PPM answers Error when
+    /// the offset plus that field exceeds 7.
+    ///
+    /// portmark only ever sends SourceCapabilitiesType 0, current supported source capabilities.
+    /// UCSI 1.2 defines the field only for this PC's own source list, so it must be zero for the
+    /// partner's, and zero is the one value that asks nothing of a PPM older than the field.
+    /// On this UCSI 1.0 controller types 0 to 2 answer identically and type 3 answers Error.
     /// </summary>
     public static ulong GetPdos(byte connector, bool partner, byte offset,
                                 byte numberMinusOne, bool source, byte sourceCapabilitiesType = 0)
@@ -114,6 +154,23 @@ public static class UcsiProtocol
          | ((ulong)(numberMinusOne & 0x03) << 32)
          | ((source ? 1UL : 0UL) << 34)
          | ((ulong)(sourceCapabilitiesType & 0x03) << 35);
+
+    /// <summary>
+    /// CONTROL for GET_PD_MESSAGE, UCSI 1.2 Table 4-50 and UCSI 2.0 Table 4-51. Absolute bit offsets:
+    /// ConnectorNumber 16-22, Recipient 23-25, MessageOffset 26-33, NumberOfBytes 34-41,
+    /// ResponseMessageType 42-47, reserved 48-63. Linux shifts by the same 23, 26, 34 and 42.
+    ///
+    /// Data Length stays zero. Number of Bytes must not exceed MAX_DATA_LENGTH, 16 here, and for a
+    /// Structured VDM both it and the offset go in fours.
+    /// </summary>
+    public static ulong GetPdMessage(byte connector, byte recipient, byte offset, byte numberOfBytes,
+                                     byte responseMessageType)
+        => CmdGetPdMessage
+         | ((ulong)(connector & 0x7F) << 16)
+         | ((ulong)(recipient & 0x07) << 23)
+         | ((ulong)offset << 26)
+         | ((ulong)numberOfBytes << 34)
+         | ((ulong)(responseMessageType & 0x3F) << 42);
 
     /// <summary>Formats the BCD version the PPM reports, e.g. 0x0100 becomes "1.0".</summary>
     public static string FormatVersion(ushort bcd)

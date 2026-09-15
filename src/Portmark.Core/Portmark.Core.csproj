@@ -8,4 +8,15 @@
     <AssemblyName>Portmark.Core</AssemblyName>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Vendor ID names from usb.ids, used under BSD-3-Clause (see THIRD-PARTY-NOTICES.md).
+         Regenerate with scripts/update-usb-vendors.ps1. The logical name is fixed so renaming
+         the folder cannot silently break the lookup. -->
+    <EmbeddedResource Include="Usb\usb-vendors.tsv" LogicalName="Portmark.Core.Usb.usb-vendors.tsv" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The tests drive the identity request path through a UcsiConnection with a fake transport,
+         which is not something any other caller should be able to construct. -->
+    <InternalsVisibleTo Include="Portmark.Core.Tests" />
+  </ItemGroup>
 </Project>

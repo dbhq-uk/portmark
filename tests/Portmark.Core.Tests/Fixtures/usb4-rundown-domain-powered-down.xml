@@ -1,0 +1,503 @@
+<Events>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>1</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:30.992846000+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-0006-3c5f-25cc1244dd01}" />
+		<Execution ProcessID="15232" ThreadID="48784" ProcessorID="6" KernelTime="0" UserTime="0" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownStart</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:30.992848200+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-0006-3c5f-25cc1244dd01}" />
+		<Execution ProcessID="15232" ThreadID="48784" ProcessorID="6" KernelTime="0" UserTime="0" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="DeviceInstancePath">PCI\VEN_1022&amp;DEV_1669&amp;SUBSYS_50D917AA&amp;REV_00&amp;USB4_MS_CM\4&amp;f0530c4&amp;0&amp;0643</Data>
+		<Data Name="BusNumber">0x66</Data>
+		<Data Name="DeviceNumber">0x0</Data>
+		<Data Name="FunctionNumber">0x6</Data>
+		<Data Name="VendorId">0x1022</Data>
+		<Data Name="DeviceId">0x1669</Data>
+		<Data Name="RevisionId">0x0</Data>
+		<Data Name="SubVendorId">0x17AA</Data>
+		<Data Name="SubSystemId">0x50D9</Data>
+		<Data Name="AcpiBiosDeviceName">\_SB_.PCI0.GP19.NHI1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>HostRouterInformationPci</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:30.992849500+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-0006-3c5f-25cc1244dd01}" />
+		<Execution ProcessID="15232" ThreadID="48784" ProcessorID="6" KernelTime="0" UserTime="0" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="DeviceInstancePath">PCI\VEN_1022&amp;DEV_1669&amp;SUBSYS_50D917AA&amp;REV_00&amp;USB4_MS_CM\4&amp;f0530c4&amp;0&amp;0643</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="IsDomainPoweredDown">1</Data>
+		<Data Name="NumberOfDomainPowerDownRequests">       1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>DomainSleepInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>2</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:30.992899000+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-0006-3c5f-25cc1244dd01}" />
+		<Execution ProcessID="15232" ThreadID="48784" ProcessorID="10" KernelTime="0" UserTime="0" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownComplete</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>1</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065499100+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c7e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownStart</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065501400+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c7e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="DeviceInstancePath">PCI\VEN_1022&amp;DEV_1669&amp;SUBSYS_50D917AA&amp;REV_00&amp;USB4_MS_CM\4&amp;f0530c4&amp;0&amp;0643</Data>
+		<Data Name="BusNumber">0x66</Data>
+		<Data Name="DeviceNumber">0x0</Data>
+		<Data Name="FunctionNumber">0x6</Data>
+		<Data Name="VendorId">0x1022</Data>
+		<Data Name="DeviceId">0x1669</Data>
+		<Data Name="RevisionId">0x0</Data>
+		<Data Name="SubVendorId">0x17AA</Data>
+		<Data Name="SubSystemId">0x50D9</Data>
+		<Data Name="AcpiBiosDeviceName">\_SB_.PCI0.GP19.NHI1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>HostRouterInformationPci</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065502400+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c7e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="DeviceInstancePath">PCI\VEN_1022&amp;DEV_1669&amp;SUBSYS_50D917AA&amp;REV_00&amp;USB4_MS_CM\4&amp;f0530c4&amp;0&amp;0643</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="IsDomainPoweredDown">1</Data>
+		<Data Name="NumberOfDomainPowerDownRequests">       1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>DomainSleepInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.HostRouter" Guid="{575ba31f-2b45-58c2-64fd-f5dc757b6137}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>2</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065504900+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c7e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownComplete</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>1</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065556900+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownStart</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065559900+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="DeviceInstancePath">USB4\ROOT_DEVICE_ROUTER&amp;VID_1022&amp;PID_1669\5&amp;3187c7ed&amp;0&amp;0</Data>
+		<Data Name="RouterUSB4Version">0x20</Data>
+		<Data Name="ConnectionManagerUSB4Version">0x10</Data>
+		<Data Name="VendorID">0x438</Data>
+		<Data Name="ProductID">0x20A</Data>
+		<Data Name="AsciiVendorName"></Data>
+		<Data Name="AsciiModelName"></Data>
+		<Data Name="DeviceID">0x0</Data>
+		<Data Name="ModelID">0x0</Data>
+		<Data Name="UUID">0x4387E7A11F5DB00</Data>
+		<Data Name="DeviceFirmwareVersion">0x0</Data>
+		<Data Name="HostFirmwareVersion">0x0</Data>
+		<Data Name="CableInfo">0x0</Data>
+		<Data Name="LastPowerUpTimeInMs">0x22F</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>DeviceRouterInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065563800+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="IsNewDeviceRouter">0</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="IsDFP">1</Data>
+		<Data Name="Lane0AdapterNumber">2</Data>
+		<Data Name="Lane1AdapterNumber">3</Data>
+		<Data Name="Lane0AdapterVersion">0</Data>
+		<Data Name="DownstreamRouterDomainID">0x0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="DownstreamRouterTopologyID">0</Data>
+		<Data Name="HECError">0</Data>
+		<Data Name="FlowControlError">0</Data>
+		<Data Name="HECErrors">       0</Data>
+		<Data Name="SupportedLinkSpeeds">0xC</Data>
+		<Data Name="SupportedLinkWidths">0x3</Data>
+		<Data Name="CurrentLinkSpeed">0x0</Data>
+		<Data Name="NegotiatedLinkWidth">0x0</Data>
+		<Data Name="TargetLinkSpeed">0x0</Data>
+		<Data Name="TargetLinkWidth">0x0</Data>
+		<Data Name="AdapterState">0x0</Data>
+		<Data Name="Lane1AdapterState">0x0</Data>
+		<Data Name="LaneBonded">0</Data>
+		<Data Name="Lane0AdapterLogicalLayerErrors">0x0</Data>
+		<Data Name="Lane1AdapterLogicalLayerErrors">0x0</Data>
+		<Data Name="CableUsb4Version">0x0</Data>
+		<Data Name="LinkCLxSupport">0</Data>
+		<Data Name="Tbt3CompatibleMode">0</Data>
+		<Data Name="CLxSupport">0x0</Data>
+		<Data Name="CLxEnable">0x0</Data>
+		<Data Name="IsLastPort">1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>PortInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065565500+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="IsNewDeviceRouter">0</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="AdapterNumber">4</Data>
+		<Data Name="AdapterType">0x1200101</Data>
+		<Data Name="IsDownstream">1</Data>
+		<Data Name="IsTunneled">0</Data>
+		<Data Name="ActualLinkRate">0x0</Data>
+		<Data Name="MaximumSupportedLinkRate">0x0</Data>
+		<Data Name="IsLastAdapter">0</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>USB3AdapterInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065566000+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="IsNewDeviceRouter">0</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="AdapterNumber">5</Data>
+		<Data Name="AdapterType">0x1100101</Data>
+		<Data Name="IsDownstream">1</Data>
+		<Data Name="IsTunneled">0</Data>
+		<Data Name="IsLastAdapter">0</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>PCIeAdapterInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065566700+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="IsNewDeviceRouter">0</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="AdapterNumber">6</Data>
+		<Data Name="AdapterType">0x10E0101</Data>
+		<Data Name="IsDPOut">0</Data>
+		<Data Name="IsTunneled">0</Data>
+		<Data Name="MaximalLinkRate">0x0</Data>
+		<Data Name="MaximalLinkCount">0x0</Data>
+		<Data Name="DPTxBwAllocationModeEnable">0</Data>
+		<Data Name="IsLastAdapter">0</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>DPAdapterInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>0</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065567300+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+		<Data Name="IsRundownEvent">1</Data>
+		<Data Name="IsNewDeviceRouter">0</Data>
+		<Data Name="DomainID">0xC06601</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="TopologyID">0</Data>
+		<Data Name="AdapterNumber">7</Data>
+		<Data Name="AdapterType">0x10E0101</Data>
+		<Data Name="IsDPOut">0</Data>
+		<Data Name="IsTunneled">0</Data>
+		<Data Name="MaximalLinkRate">0x0</Data>
+		<Data Name="MaximalLinkCount">0x0</Data>
+		<Data Name="DPTxBwAllocationModeEnable">0</Data>
+		<Data Name="IsLastAdapter">1</Data>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>DPAdapterInformation</Task>
+	</RenderingInfo>
+</Event>
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+	<System>
+		<Provider Name="Microsoft.Windows.USB.USB4.DeviceRouter" Guid="{ae795d36-2b11-5efb-c7e0-5d552bc55d6c}" />
+		<EventID>0</EventID>
+		<Version>0</Version>
+		<Level>5</Level>
+		<Task>0</Task>
+		<Opcode>2</Opcode>
+		<Keywords>0x3</Keywords>
+		<TimeCreated SystemTime="2026-09-15T10:14:31.065567600+00:59" />
+		<Correlation ActivityID="{cb06adc1-4412-000a-c8e1-15cc1244dd01}" />
+		<Execution ProcessID="42408" ThreadID="47208" ProcessorID="10" KernelTime="15" UserTime="15" />
+		<Channel />
+		<Computer />
+	</System>
+	<EventData>
+	</EventData>
+	<RenderingInfo Culture="en-GB">
+		<Task>RundownComplete</Task>
+	</RenderingInfo>
+</Event>
+</Events>

@@ -15,7 +15,9 @@ internal static class Program
     private const int ExitNeedsSetup = 2;
     private const int ExitUnsupported = 3;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal const string Version = "0.2.0";
+
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -36,11 +38,13 @@ internal static class Program
 
         if (args.Contains("--version"))
         {
-            Console.WriteLine("portmark 0.2.0");
+            Console.WriteLine($"portmark {Version}");
             return ExitOk;
         }
 
-        string? command = args.FirstOrDefault(a => !a.StartsWith('-'));
+        // The value after --out, --from or --sample is not a command, even though it does not start with '-'.
+        string? command = args.Where((a, i) => !a.StartsWith('-') && (i == 0 || args[i - 1] is not ("--out" or "--from" or "--sample")))
+                              .FirstOrDefault();
         return command switch
         {
             "doctor" => Doctor(),
@@ -50,10 +54,13 @@ internal static class Program
             "usb" => UsbDevices(),
             "tree" => UsbTree(),
             "power" => PowerBudgetReport(),
+            "battery" => Battery(args),
             "watch" => Watch(),
             "stress" => Stress(noAck: args.Contains("--no-ack")),
+            "usb4" => Usb4Command.Run(args),
             "enable" => SetTestInterface(enabled: true),
             "disable" => SetTestInterface(enabled: false),
+            "report" => HardwareReport.Run(args),
             null or "read" => Read(human: args.Contains("--human")),
             _ => Fail($"unknown command '{command}'. Try --help."),
         };
@@ -63,16 +70,19 @@ internal static class Program
     {
         PortmarkReport report = PortmarkReader.Read();
 
-        if (human) PrintHuman(report);
+        if (human) WriteHuman(report, Console.Out);
         else Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
 
-        return report.Capability.Status switch
-        {
-            CapabilityStatus.Ok => ExitOk,
-            CapabilityStatus.NeedsSetup => ExitNeedsSetup,
-            _ => ExitUnsupported,
-        };
+        return ExitCodeFor(report);
     }
+
+    /// <summary>The exit code a read ends with. Shared so 'report' exits exactly as a read would.</summary>
+    internal static int ExitCodeFor(PortmarkReport report) => report.Capability.Status switch
+    {
+        CapabilityStatus.Ok => ExitOk,
+        CapabilityStatus.NeedsSetup => ExitNeedsSetup,
+        _ => ExitUnsupported,
+    };
 
     /// <summary>
     /// Does a full read, then watches whether the device stays enumerable. Measures how much the
@@ -165,55 +175,67 @@ internal static class Program
 
         foreach (Portmark.Core.Model.BillboardReport b in found)
         {
-            Console.WriteLine($"Billboard device {b.VendorId}:{b.ProductId}");
+            Console.WriteLine($"Billboard device {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  [{m.Index}] {m.Name}  mode {m.ModeNumber}  -> {m.State}");
+                Console.WriteLine($"  [{m.Index}] {ModeLabel(m.Name, m.Svid, m.VendorName)}  mode {m.ModeNumber}  -> {m.State}");
+            if (b.TruncationNote is not null)
+                Console.WriteLine($"  {Wrap(b.TruncationNote, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
 
             Console.WriteLine(b.CarriesVideo
                 ? "  Video: DisplayPort alternate mode entered successfully."
                 : b.SupportsVideo
                     ? "  Video: DisplayPort is offered but was not entered."
-                    : "  Video: this adapter offers no DisplayPort alternate mode.");
+                    : b.Truncated
+                        ? "  Video: no DisplayPort mode in the part of the descriptor that could be read."
+                        : "  Video: this adapter offers no DisplayPort alternate mode.");
             Console.WriteLine();
         }
 
         return ExitOk;
     }
 
-    private static void PrintHuman(PortmarkReport report)
+    /// <summary>
+    /// The --human rendering. Takes a writer rather than printing so 'report' can put the exact
+    /// same text in its file.
+    /// </summary>
+    internal static void WriteHuman(PortmarkReport report, TextWriter output)
     {
-        Console.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
-        Console.WriteLine();
+        output.WriteLine($"{report.Machine.Manufacturer} {report.Machine.Model}");
+        output.WriteLine();
+
+        // Battery IOCTLs need no setup either, so the batteries are shown whatever the port
+        // controller can do.
+        PrintBatteries(report.Machine.Batteries, report.Machine.BatteriesNote, output);
 
         // Billboard data needs no setup, so it is worth showing even when the UCSI path is not
         // available. Printing it only on the happy path threw away the one answer this machine
         // could give with no configuration at all.
-        PrintBillboards(report);
+        PrintBillboards(report, output);
 
         if (report.Capability.Status != CapabilityStatus.Ok)
         {
-            Console.WriteLine(Wrap(report.Capability.Explanation));
+            output.WriteLine(Wrap(report.Capability.Explanation));
             if (report.Capability.Remedy is not null)
             {
-                Console.WriteLine();
-                Console.WriteLine(Wrap(report.Capability.Remedy));
+                output.WriteLine();
+                output.WriteLine(Wrap(report.Capability.Remedy));
             }
             return;
         }
 
         if (report.Capability.Features is { CableDetailsAvailable: false })
         {
-            Console.WriteLine(Wrap(
+            output.WriteLine(Wrap(
                 "Note: this PC's port controller does not report cable information, so the cable "
               + "rows below will say so. Port and power details are unaffected. This is a firmware "
               + "limitation, not a property of your cables."));
-            Console.WriteLine();
+            output.WriteLine();
         }
 
         foreach (ConnectorReport connector in report.Connectors)
         {
-            Console.WriteLine($"Port {connector.Index}");
-            Console.WriteLine($"  {connector.Summary}");
+            output.WriteLine($"Port {connector.Index}");
+            output.WriteLine($"  {connector.Summary}");
 
             if (connector.Capability is { } cap)
             {
@@ -223,54 +245,101 @@ internal static class Program
                 if (cap.SupportsAlternateModes) supports.Add("alternate modes");
                 if (cap.SupportsDualRolePower) supports.Add("dual role power");
                 if (cap.SupportsAudioAccessory) supports.Add("audio accessory");
-                Console.WriteLine($"  Port supports {string.Join(", ", supports)}");
+                output.WriteLine($"  Port supports {string.Join(", ", supports)}");
             }
 
-            if (connector.ActiveAlternateModeIndex is int cam)
-                Console.WriteLine($"  Alt mode     index {cam} active (identity unavailable on this PC)");
+            if (connector.SupportedAlternateModes is { } modes)
+                output.WriteLine(modes.DataAvailable && modes.Modes.Count > 0
+                    ? $"  Alt modes    {string.Join(", ", modes.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(modes.Complete ? "" : " (list incomplete)")}"
+                    : $"  Alt modes    {(modes.DataAvailable ? "none listed" : "not listed by this controller")}");
+            if (connector.PartnerAlternateModes is { DataAvailable: true, Modes.Count: > 0 } offered)
+                output.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(offered.Complete ? "" : " (list incomplete)")}");
+            if (connector.ActiveAlternateMode is { } active)
+                output.WriteLine($"  Current mode {ModeLabel(active.Name, active.Svid, active.VendorName)}"
+                                + (connector.ActiveAlternateModeConfirmed
+                                    ? ""
+                                    : ", on the controller's word alone and not confirmed"));
 
             PowerReport power = connector.Power;
             if (power.DataAvailable)
             {
                 if (power.Negotiated is { } n)
-                    Console.WriteLine($"  Negotiated   {n.Display}");
+                    output.WriteLine($"  Negotiated   {n.Display}");
+                if (connector.BatteryChargingStatus is { } charging)
+                    output.WriteLine($"  Charging     {charging}, according to the controller");
                 if (power.PartnerSource.Count > 0)
                 {
-                    Console.WriteLine($"  Supply offers");
+                    // When this PC is the source, the attached device is not the supply; any
+                    // source objects it lists are what it could offer as a dual-role device.
+                    output.WriteLine(connector.PowerDirection == "supplying"
+                        ? "  Attached device offers"
+                        : "  Supply offers");
                     foreach (PowerObjectReport pdo in power.PartnerSource)
-                        Console.WriteLine($"    - {pdo.Display}");
+                        output.WriteLine($"    - {pdo.Display}");
                 }
                 if (power.LocalSource.Count > 0)
                 {
-                    Console.WriteLine($"  This PC offers");
+                    output.WriteLine($"  This PC offers");
                     foreach (PowerObjectReport pdo in power.LocalSource)
-                        Console.WriteLine($"    - {pdo.Display}");
+                        output.WriteLine($"    - {pdo.Display}");
+                }
+                if (power.PowerDiagnosis is not null)
+                {
+                    output.WriteLine();
+                    output.WriteLine("  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **");
+                    output.WriteLine($"  {Wrap(power.PowerDiagnosis, 72).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
                 }
             }
 
             CableReport cable = connector.Cable;
             if (cable.DataAvailable)
             {
-                Console.WriteLine($"  Speed        {cable.Speed?.Display ?? "not reported by the cable"}");
-                Console.WriteLine($"  Power        {DescribeCurrent(cable)}");
-                Console.WriteLine($"  Plug         {cable.PlugType ?? "unknown"}");
-                Console.WriteLine($"  Construction {(cable.ActiveCable == true ? "active" : "passive")}");
-                Console.WriteLine($"  Video        {cable.VideoNote}");
+                output.WriteLine($"  Speed        {cable.Speed?.Display ?? "not reported by the cable"}");
+                output.WriteLine($"  Power        {DescribeCurrent(cable)}");
+                output.WriteLine($"  Plug         {cable.PlugType ?? "unknown"}");
+                output.WriteLine($"  Construction {(cable.ActiveCable == true ? "active" : "passive")}");
+                output.WriteLine($"  Video        {cable.VideoNote}");
             }
             else if (cable.Reason is not null)
             {
-                Console.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                output.WriteLine($"  Why          {Wrap(cable.Reason, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }
 
-            Console.WriteLine();
+            if (cable.Inferred is { } inferred)
+            {
+                output.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.##}A, deduced not reported");
+                string deduction = $"{inferred.Evidence} {inferred.Basis} {inferred.Conclusion}";
+                output.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+            }
+
+            // Discover Identity, only where the controller could be asked. Each line is the
+            // device's or cable's own declaration, and says so.
+            if (connector.Identity is { } identity)
+            {
+                if (identity.Partner is { DataAvailable: true, Declaration: { } deviceSays })
+                    output.WriteLine($"  Device ID    {Wrap(deviceSays, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                if (identity.Cable is { DataAvailable: true, Declaration: { } cableSays })
+                    output.WriteLine($"  Cable ID     {Wrap(cableSays, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+                if (!identity.Requested && connector.Connected == true && identity.Reason is { } notAsked)
+                    output.WriteLine($"  Identity     {Wrap(notAsked, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+            }
+
+            output.WriteLine();
         }
     }
 
     /// <summary>Shows attached devices as the tree they physically form.</summary>
     private static int UsbTree()
     {
-        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
-        List<Portmark.Core.Model.UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices);
+        Portmark.Core.Model.UsbScanReport scan = Portmark.Core.Usb.UsbDeviceScanner.Scan();
+        List<Portmark.Core.Model.UsbDeviceReport> devices = scan.Devices;
+        List<Portmark.Core.Model.UsbTreeNode> roots = Portmark.Core.Usb.UsbTopology.Build(devices, scan.PortStatuses);
+
+        if (Environment.GetCommandLineArgs().Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(roots, JsonOptions));
+            return ExitOk;
+        }
 
         if (roots.Count == 0)
         {
@@ -288,6 +357,10 @@ internal static class Program
         if (slow > 0)
             Console.WriteLine($"{slow} device(s) running slower than they could. Run 'portmark usb' for detail.");
 
+        int faults = scan.PortStatuses.Count(p => p.IsFault);
+        if (faults > 0)
+            Console.WriteLine($"{faults} port(s) where the hub reports a failed connection. Run 'portmark usb' for detail.");
+
         return ExitOk;
     }
 
@@ -300,8 +373,15 @@ internal static class Program
         else
         {
             string branch = last ? "└─ " : "├─ ";
+            if (node.PortStatus is { } status)
+            {
+                string fault = status.IsFault ? "  ** fault **" : "";
+                Console.WriteLine($"{prefix}{branch}{node.Label}: {status.Description}{fault}");
+                return;
+            }
+
             string detail = node.Device is { } d
-                ? $"  [{d.VendorId}:{d.ProductId}, {d.Speed}]"
+                ? $"  [{VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId}, {d.Speed}]"
                 : "";
             string warn = node.Device?.IsUnderperforming == true ? "  ** slow **" : "";
             string ambiguous = node.AmbiguousTopology ? "  (position uncertain: identical hubs)" : "";
@@ -374,10 +454,10 @@ internal static class Program
         Console.WriteLine("Watching USB ports. Plug something in, or press Ctrl+C to stop.");
         Console.WriteLine();
 
-        foreach (IReadOnlyList<Portmark.Core.Usb.UsbChange> batch in
-                 Portmark.Core.Usb.UsbWatcher.Watch(TimeSpan.FromSeconds(1), cancel.Token))
+        foreach (Portmark.Core.Usb.UsbWatchBatch batch in
+                 Portmark.Core.Usb.UsbWatcher.WatchWithFaults(TimeSpan.FromSeconds(1), cancel.Token))
         {
-            foreach (Portmark.Core.Usb.UsbChange change in batch)
+            foreach (Portmark.Core.Usb.UsbChange change in batch.Changes)
             {
                 Portmark.Core.Model.UsbDeviceReport d = change.Device;
                 string name = d.Product ?? d.Manufacturer ?? $"Unidentified {d.DeviceClass} device";
@@ -386,7 +466,7 @@ internal static class Program
                 if (change.Kind == Portmark.Core.Usb.UsbChangeKind.Attached)
                 {
                     Console.WriteLine($"[{stamp}] + {name}");
-                    Console.WriteLine($"          {d.VendorId}:{d.ProductId}, {d.DeviceClass}, {d.Speed}");
+                    Console.WriteLine($"          {VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId}, {d.DeviceClass}, {d.Speed}");
                     if (d.MaxPowerMilliamps is int ma) Console.WriteLine($"          requests up to {ma} mA");
                     if (d.LinkDiagnosis is not null)
                     {
@@ -396,11 +476,13 @@ internal static class Program
                 }
                 else
                 {
-                    Console.WriteLine($"[{stamp}] - {name}  ({d.VendorId}:{d.ProductId})");
+                    Console.WriteLine($"[{stamp}] - {name}  ({VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId})");
                 }
 
                 Console.WriteLine();
             }
+
+            PrintPortFaults(batch.Faults);
         }
 
         Console.WriteLine("Stopped.");
@@ -410,9 +492,16 @@ internal static class Program
     /// <summary>Lists every attached USB device, read from the devices themselves.</summary>
     private static int UsbDevices()
     {
-        List<Portmark.Core.Model.UsbDeviceReport> devices = Portmark.Core.Usb.UsbDeviceScanner.ScanAll();
+        Portmark.Core.Model.UsbScanReport scan = Portmark.Core.Usb.UsbDeviceScanner.Scan();
+        List<Portmark.Core.Model.UsbDeviceReport> devices = scan.Devices;
 
-        if (devices.Count == 0)
+        if (Environment.GetCommandLineArgs().Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(scan, JsonOptions));
+            return ExitOk;
+        }
+
+        if (devices.Count == 0 && scan.PortStatuses.Count == 0)
         {
             Console.WriteLine("No USB devices found.");
             return ExitOk;
@@ -433,11 +522,17 @@ internal static class Program
                        ?? $"Unidentified {d.DeviceClass} device";
             Console.WriteLine($"{name}{(d.IsHub ? "  [hub]" : "")}");
             Console.WriteLine($"  ID           {d.VendorId}:{d.ProductId}");
+            if (d.VendorName is not null) Console.WriteLine($"  Vendor ID    {d.VendorId} is registered to {d.VendorName}");
             if (d.Manufacturer is not null) Console.WriteLine($"  Maker        {d.Manufacturer}");
             if (d.SerialNumber is not null) Console.WriteLine($"  Serial       {d.SerialNumber}");
             Console.WriteLine($"  Class        {d.DeviceClass}");
             Console.WriteLine($"  Speed        {d.Speed}");
             Console.WriteLine($"  USB version  {d.UsbVersion}");
+            if (d.LinkEvidence?.PortProtocols is { } protocols)
+                Console.WriteLine($"  Port         the hub reports {protocols}"
+                                + (d.LinkEvidence.CompanionPortProtocols is { } shared
+                                    ? $", and {shared} on companion port {d.LinkEvidence.CompanionPortNumber} of the same connector"
+                                    : ""));
             Console.WriteLine(d.MaxPowerMilliamps is int ma
                 ? $"  Requests     up to {ma} mA"
                 : "  Requests     not reported");
@@ -452,24 +547,189 @@ internal static class Program
             Console.WriteLine();
         }
 
+        PrintPortStatuses(scan.PortStatuses);
         return ExitOk;
     }
 
-    private static void PrintBillboards(PortmarkReport report)
+    /// <summary>
+    /// The batteries' own readings, and with --sample the average net charge flow over an
+    /// interval. Only battery IOCTLs are sent, so this never touches the port controller, and the
+    /// wait happens only when it is asked for.
+    /// </summary>
+    private static int Battery(string[] args)
     {
-        foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
+        int at = Array.IndexOf(args, "--sample");
+        if (at < 0)
         {
-            Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
-            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  {m.Name}: {m.State}");
-            Console.WriteLine(b.CarriesVideo
-                ? "  Video        yes, DisplayPort is active through this adapter"
-                : b.SupportsVideo
-                    ? "  Video        supported but not currently active"
-                    : "  Video        this adapter offers no DisplayPort mode");
+            List<BatteryReport> batteries = Portmark.Core.Power.BatteryTelemetry.ReadAll(out string? note);
+            if (args.Contains("--json"))
+                Console.WriteLine(JsonSerializer.Serialize(new { batteries, batteriesNote = note }, JsonOptions));
+            else
+                PrintBatteries(batteries, note, Console.Out);
+            return batteries.Any(b => b.Present) ? ExitOk : ExitUnsupported;
+        }
+
+        if (at + 1 >= args.Length || !int.TryParse(args[at + 1], out int seconds) || seconds <= 0)
+            return Fail("--sample needs a whole number of seconds, for example 'portmark battery --sample 60'.");
+
+        Console.WriteLine($"Sampling battery capacity over {seconds} seconds. Only the battery is read.");
+        Console.WriteLine();
+
+        List<Portmark.Core.Power.BatterySample> samples =
+            Portmark.Core.Power.BatteryTelemetry.Sample(TimeSpan.FromSeconds(seconds), out string? sampleNote);
+
+        List<BatteryReport> ends = samples.Select(s => s.End ?? s.Start).OfType<BatteryReport>().ToList();
+        PrintBatteries(ends, sampleNote, Console.Out);
+
+        // Rendered in Core so the words are tested, not only the numbers.
+        Portmark.Core.Power.BatterySampleText.Write(samples, Console.Out, Wrap);
+        return samples.Count > 0 ? ExitOk : ExitUnsupported;
+    }
+
+    private static void PrintBatteries(List<BatteryReport> batteries, string? note, TextWriter output)
+    {
+        if (batteries.Count == 0)
+        {
+            if (note is not null)
+            {
+                output.WriteLine($"Battery      {Wrap(note, 60).Replace(Environment.NewLine, Environment.NewLine + "             ")}");
+                output.WriteLine();
+            }
+            return;
+        }
+
+        foreach (BatteryReport b in batteries)
+        {
+            string name = string.Join(", ", new[] { b.DeviceName, b.Manufacturer }.OfType<string>());
+            output.WriteLine((batteries.Count > 1 ? $"Battery {b.Index}" : "Battery")
+                            + (name.Length > 0 ? $"  ({name})" : ""));
+
+            if (!b.Present)
+            {
+                output.WriteLine($"  {b.Reason ?? "No battery is in this battery slot."}");
+                output.WriteLine();
+                continue;
+            }
+
+            if (b.ChargePercent is int percent)
+                output.WriteLine($"  Charge       {percent} percent"
+                                + (b.RemainingCapacityMilliwattHours is int left && b.FullChargeCapacityMilliwattHours is int full
+                                    ? $", {Wh(left)} of {Wh(full)}"
+                                    : ""));
+            else
+                output.WriteLine("  Charge       not reported");
+
+            if (b.PowerState is { } state)
+            {
+                var flags = new List<string>();
+                if (state.OnExternalPower) flags.Add("on external power");
+                if (state.Charging) flags.Add("charging");
+                if (state.Discharging) flags.Add("discharging");
+                if (state.Critical) flags.Add("critical");
+                output.WriteLine($"  State        {(flags.Count > 0 ? string.Join(", ", flags) : "no state flags set")}, as the battery reports it");
+            }
+
+            output.WriteLine(b.RateMilliwatts switch
+            {
+                int rate and not 0 => $"  Rate         {DescribeFlow(rate)}, the battery's own charge flow, not cable power",
+                0 => "  Rate         zero as reported; some batteries report only discharging rates",
+                _ => "  Rate         not reported",
+            });
+
+            if (b.VoltageMillivolts is int mv) output.WriteLine($"  Voltage      {mv / 1000.0:0.00}V");
+            if (b.HealthPercent is int health)
+                output.WriteLine($"  Health       {health} percent, {Wh(b.FullChargeCapacityMilliwattHours!.Value)} full charge "
+                                + $"against {Wh(b.DesignCapacityMilliwattHours!.Value)} design, the battery's own estimate");
+            if (b.CycleCount is int cycles) output.WriteLine($"  Cycles       {cycles}");
+            if (b.Chemistry is not null) output.WriteLine($"  Chemistry    {b.Chemistry}");
+
+            foreach (string? text in new[] { b.Note, b.Reason })
+                if (text is not null)
+                    output.WriteLine($"  Note         {Wrap(text, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
+
+            output.WriteLine();
+        }
+    }
+
+    private static string DescribeFlow(int milliwatts) => Portmark.Core.Power.BatterySampleText.DescribeFlow(milliwatts);
+
+    private static string Wh(int milliwattHours) => $"{milliwattHours / 1000.0:0.0} Wh";
+
+    /// <summary>
+    /// Ports whose hub reports something other than empty or connected. They have no working
+    /// device to list, which is why they need listing: a failed enumeration is otherwise invisible.
+    /// </summary>
+    private static void PrintPortStatuses(IReadOnlyList<Portmark.Core.Model.UsbPortStatusReport> ports)
+    {
+        foreach (Portmark.Core.Model.UsbPortStatusReport p in ports.OrderByDescending(x => x.IsFault))
+        {
+            Console.WriteLine($"{Portmark.Core.Usb.UsbTopology.HubLabel(p.HubPath)}, port {p.Port}");
+            if (p.VendorId is not null) Console.WriteLine($"  ID           {p.VendorId}:{p.ProductId}");
+            if (p.VendorName is not null) Console.WriteLine($"  Vendor ID    {p.VendorId} is registered to {p.VendorName}");
+            Console.WriteLine($"  Status       {p.ConnectionStatus}");
+            if (p.IsFault)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  ** PORT FAULT **");
+            }
+            string said = char.ToUpperInvariant(p.Description[0]) + p.Description[1..] + ".";
+            Console.WriteLine($"  {Wrap(said, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
             Console.WriteLine();
         }
     }
+
+    /// <summary>
+    /// Ports whose hub has just started reporting a failed connection, once per occurrence. In the
+    /// hub's words and attributed to it: nothing read here knows what caused the failure.
+    /// </summary>
+    private static void PrintPortFaults(IReadOnlyList<Portmark.Core.Model.UsbPortStatusReport> faults)
+    {
+        foreach (Portmark.Core.Model.UsbPortStatusReport f in faults)
+        {
+            string stamp = DateTime.Now.ToString("HH:mm:ss");
+            Console.WriteLine($"[{stamp}] ! {Portmark.Core.Usb.UsbTopology.HubLabel(f.HubPath)}, port {f.Port}  ** PORT FAULT **");
+            if (f.VendorId is not null) Console.WriteLine($"          {VendorLabel(f.VendorId, f.VendorName)}:{f.ProductId}");
+            Console.WriteLine($"          {Wrap($"{f.Description} ({f.ConnectionStatus}).", 64).Replace(Environment.NewLine, Environment.NewLine + "          ")}");
+            Console.WriteLine();
+        }
+    }
+
+    private static void PrintBillboards(PortmarkReport report, TextWriter output)
+    {
+        foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
+        {
+            output.WriteLine($"Adapter {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
+            foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
+                output.WriteLine($"  {ModeLabel(m.Name, m.Svid, m.VendorName)}: {m.State}");
+            if (b.TruncationNote is not null)
+                output.WriteLine($"  {Wrap(b.TruncationNote, 70).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+            output.WriteLine(b.CarriesVideo
+                ? "  Video        yes, DisplayPort is active through this adapter"
+                : b.SupportsVideo
+                    ? "  Video        supported but not currently active"
+                    : b.Truncated
+                        ? "  Video        not in the part of the descriptor that could be read"
+                        : "  Video        this adapter offers no DisplayPort mode");
+            output.WriteLine();
+        }
+    }
+
+    /// <summary>
+    /// A vendor ID with the name registered to it in brackets, as in "0x05AC (Apple, Inc.)", or the
+    /// bare ID when the vendor list does not name it. The brackets are the registered name, not
+    /// the maker: the help text says so, and the device's own manufacturer string is shown apart.
+    /// </summary>
+    private static string VendorLabel(string vendorId, string? vendorName)
+        => vendorName is null ? vendorId : $"{vendorId} ({vendorName})";
+
+    /// <summary>
+    /// A mode's name, with the registered vendor name added only where the name is the bare SVID.
+    /// A mode that already has a name of its own, such as DisplayPort, is left as it is.
+    /// </summary>
+    private static string ModeLabel(string name, string svid, string? vendorName)
+        => vendorName is not null && name.Contains(svid, StringComparison.OrdinalIgnoreCase)
+            ? $"{name} ({vendorName})"
+            : name;
 
     private static string DescribeCurrent(CableReport cable)
     {
@@ -554,19 +814,19 @@ internal static class Program
         }
     }
 
-    private static bool IsElevated()
+    internal static bool IsElevated()
     {
         using WindowsIdentity identity = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    private static int Fail(string message)
+    internal static int Fail(string message)
     {
         Console.Error.WriteLine($"portmark: {message}");
         return ExitError;
     }
 
-    private static string Wrap(string text, int width = 76)
+    internal static string Wrap(string text, int width = 76)
     {
         var lines = new List<string>();
         var line = new System.Text.StringBuilder();
@@ -594,11 +854,25 @@ internal static class Program
             USAGE
               portmark                 read all ports, print JSON
               portmark --human         read all ports, print plain English
+              portmark report          read all ports, write one file to attach to a hardware report
+              portmark usb             list attached USB devices, their link speed and port faults
+              portmark usb --json      the same, as JSON
+              portmark tree            show attached USB devices as the tree they form
+              portmark tree --json     the same, as JSON
+              portmark battery         read the batteries' own charge, rate and health
+              portmark battery --json  the same, as JSON
+              portmark battery --sample SECONDS
+                                       also average the battery's net charge flow over SECONDS
               portmark enable          switch on the port controller interface (needs admin, once)
               portmark disable         switch it back off (needs admin)
+              portmark usb4            what Windows' USB4 drivers report: links, speed, tunnels
+                                       (needs admin; reads a few seconds of trace events)
+              portmark usb4 --from F   decode a tracerpt XML file instead (no admin needed)
 
             OPTIONS
               --human                  human-readable output instead of JSON
+              --out PATH               where 'report' writes (default portmark-report-<time>.json here)
+              --no-redact              keep serial numbers, device paths and names in the report
               --version                print the version
               --help                   this text
 
@@ -606,13 +880,23 @@ internal static class Program
               0  ports were read
               1  an error occurred
               2  a one-time setup step is needed; run 'portmark enable' as administrator
-              3  this PC cannot report cable data
+              3  this PC cannot report the data this command reads: cable data for a port read,
+                 or, for 'battery', no battery answered
+              'report' writes its file whichever of 0, 2 or 3 the reading gives, then exits with
+              that code. It exits 1 only when the file could not be written.
 
             NOTES
               Fields that the hardware did not report are null in JSON, and say so in --human
               output. Nothing is inferred from the shape of a connector.
 
+              A name in brackets after a vendor ID, as in 0x05AC (Apple, Inc.), is the name that
+              ID is registered to in the USB ID Repository. It says who holds the number, not who
+              made the device.
+
               portmark only ever reads. It never sends a command that changes port state.
+
+              'report' only writes a file. It sends nothing and opens nothing; sharing the file
+              is up to you.
             """);
     }
 }

@@ -11,7 +11,8 @@ Findings are reproducible with the diagnostic commands described at the end.
 
 | | |
 |---|---|
-| Model | Lenovo ThinkPad T16 Gen 2 |
+| Model | Lenovo ThinkPad T16 Gen 2, AMD (type 21K7, Ryzen 7 PRO 7840U) |
+| Firmware | BIOS R2FET70W (1.50, May 2026), EC 1.33. The UCSI PPM is the embedded controller, reached through Lenovo's `UsbCTabl` SSDT |
 
 | OS | Windows 11 Pro 25H2, build 10.0.26200.9445, x64 |
 | UCM device | `ACPI\USBC000\0`, "UCM-UCSI ACPI Device" |
@@ -119,7 +120,9 @@ without sending anything meaningful.
 ## Data actually read, unelevated
 
 ```
-UCSI VERSION = 0x0100   CCI = 0x82000000        (Command Completed + Reset Completed)
+UCSI VERSION = 0x0100   CCI = 0x82000000        (Command Completed + Not Supported, bit 25;
+                                                 originally misread here as Reset Completed,
+                                                 which is bit 27. See "The CCI indicator bits")
 
 GET_CAPABILITY   CCI=0x80001000 (completed, 16-byte payload)
                  46400000029400000300020100020001
@@ -189,10 +192,10 @@ Cable data being unavailable does not mean nothing is. Measured on the ThinkPad 
 | `GET_CAPABILITY` | Works. 2 connectors, PD 2.0, Type-C 1.0, BC 1.2, 3 alternate modes. |
 | `GET_CONNECTOR_CAPABILITY` | Works. USB 2.0, USB 3.x, alternate modes, dual role power, provider and consumer. |
 | `GET_CONNECTOR_STATUS` | Works. Attachment, partner type, power direction, power operation mode, and the RDO. |
-| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A - exactly the 65W charger plugged in. |
-| `GET_CAM_SUPPORTED` / `GET_CURRENT_CAM` | Work. An alternate mode is active on both connectors. |
-| `GET_ALTERNATE_MODES` | **Declined**, despite being advertised. See below. |
-| `GET_CABLE_PROPERTY` | Not advertised, returns nothing. |
+| `GET_PDOS` | Works, and **verified**. The attached supply decodes to 5V/3A, 9V/3A, 15V/3A, 20V/3.25A - exactly the 65W charger plugged in. One call returns at most four objects, so portmark reads offset 4 for objects five to seven when the first page is full. With the 100W charger's four objects on connector 1, that second read (CONTROL `0x000604810010`) answers CCI `0x80000000`: completed, zero length, no error. |
+| `GET_CAM_SUPPORTED` / `GET_CURRENT_CAM` | Work. `GET_CAM_SUPPORTED` returns `0x03`. `GET_CURRENT_CAM` returns `0` on both connectors, including the empty one, so on its own it does not say a mode is active. |
+| `GET_ALTERNATE_MODES` | **Works.** The spike first reported it declined; that was portmark's own encoding error. See below. |
+| `GET_CABLE_PROPERTY` | Not advertised, and answered with the **Not Supported** indicator (CCI `0x82000000`), exactly as an undefined opcode is. See below. |
 
 Two of those deserve comment.
 
@@ -201,17 +204,63 @@ actually have - how much power can this supply deliver, and how much am I drawin
 verifiable against the label on the charger. It works on a controller that cannot report cables at
 all.
 
-**`GET_ALTERNATE_MODES` is advertised but not honoured.** `bmOptionalFeatures` bit 2,
-`AlternateModeDetailsAvailable`, is set. The command was then swept across every recipient (0-3),
-offsets 0-2 and all four values of the two-bit count field, on both connectors: **96 combinations,
-zero payloads**, each completing with CCI bit 30 set and zero length. Meanwhile `GET_CAM_SUPPORTED`
-returns `0x03` and `GET_CURRENT_CAM` returns an active index on both connectors, so the modes
-plainly exist.
+**`GET_ALTERNATE_MODES` works, and the spike's "declined" finding was portmark's own mistake.**
+The first encoding packed the command-specific fields contiguously from bit 19, which put the
+connector number where the specification has reserved bits. The controller therefore received
+connector number zero, and answered CCI `0xC0000000`: Command Completed plus the **Error**
+indicator (bit 30), with `GET_ERROR_STATUS` immediately afterwards reporting `0x0002`,
+non-existent connector number. It was answering the question it was asked. The spike swept 96
+combinations of the wrong encoding and read every Error as an empty success, because its
+indicator constants sat two bits low (next paragraph).
 
-The practical consequence is specific and worth stating precisely: portmark can tell you an
-alternate mode **is active**, but not **which**. Without the SVID there is no way to confirm
-DisplayPort, so video capability is reported as *unknown*, not as *absent*. Those are different
-claims and conflating them is exactly the failure this project exists to avoid.
+With the connector number at bits 24-30 (UCSI Table 4-17; Linux `UCSI_GET_ALTMODE_CONNECTOR_NUMBER`
+shifts by 24) the controller lists its modes, two per response:
+
+```
+connector 1  offset 0  EF17 01000000  8780 01000000   -> 0x17EF Lenovo, 0x8087 Intel Thunderbolt 3
+             offset 2  01FF 03000000                  -> 0xFF01 DisplayPort
+connector 2  offset 0  EF17 01000000  01FF 03000000   -> 0x17EF Lenovo, 0xFF01 DisplayPort
+             offset 2  (zero length)
+```
+
+Three modes on connector 1 and two on connector 2. That matches `bNumAltModes = 3` from
+`GET_CAPABILITY`, and it matches the machine: connector 1 is the USB4 port and connector 2 the
+USB 3.2 port. With recipient SOP (the attached partner) and a 65W charger on connector 1, both
+connectors return zero length: no partner modes were reported with this charger attached.
+
+So the practical consequence is the reverse of what this section first said. portmark can name
+the modes each port supports and the modes an attached device offers, from UCSI, without needing
+a Billboard device. What it still must not do is take `GET_CURRENT_CAM` at face value: this
+controller returns `0` for an empty port, against the specification's `0xFF`, so index 0 can mean
+either "the first listed mode" or "nothing". The first release said "an alternate mode is active"
+about a bare charger on the strength of that 0.
+
+A second capture settles how far the index can be trusted. With a USB-C DisplayPort adapter on
+connector 2 (Billboard `0x343C`, which reports DisplayPort Alternate Mode "entered successfully"),
+`GET_CURRENT_CAM` returns `1`, and offset 1 in that port's list is DisplayPort. So the index was
+right that time. The iPhone capture further down gives the same `1` with no display attached, so a
+non-zero index is not proof on its own. Meanwhile the partner list (recipient SOP) stays empty and the partner
+flags in `GET_CONNECTOR_STATUS` stay `0x01` (alternate mode bit clear), exactly as with the charger:
+this controller never describes the partner's modes, so neither of those can be used to veto its
+index. portmark therefore names a non-zero index as the controller's own statement, says so, and
+treats index 0 as unconfirmed. A mode counts as confirmed only when the connector status says an
+alternate mode is in operation. A partner that lists a mode can enter it, which is not the same as
+having entered it. Recipient SOP' (the cable)
+also returns zero length on both ports, with the charger and with the adapter; neither is a known
+e-marked cable, so that is not yet evidence either way about cable modes.
+
+**The CCI indicator bits were two positions low.** UCSI places Not Supported at bit 25, Cancel
+Completed 26, Reset Completed 27, Busy 28, Acknowledge 29, Error 30 and Command Completed 31
+(Microsoft's `UCSI_CCI` and Linux `ucsi.h` agree). The spike and the first release used Busy 26,
+Acknowledge 27, Error 28 and Not Supported 23. Two consequences. The Error answer above was
+invisible. And the controller's answer to `GET_CABLE_PROPERTY`, CCI `0x82000000`, is Command
+Completed plus **Not Supported**, not a bare completion. That answer is byte-for-byte what the
+controller returns for an undefined opcode (`0x7F`). The firmware reports the command as
+unsupported in the same way it reports a command that does not exist: not an error, not an empty
+answer, an unsupported command.
+`GET_ERROR_STATUS` stays clear afterwards because Not Supported is not an error condition. It is
+also the same answer whether the connector number is placed at bit 16 or bit 24, so the cable
+result is not another encoding slip.
 
 ## A second path that needs no setup at all
 
@@ -242,7 +291,7 @@ That reshapes the product into two tiers:
 | Tier | Needs | Gives |
 |---|---|---|
 | **Zero setup** | nothing | Alternate modes by SVID, and whether DisplayPort is active. Works for every user on first run. |
-| **One-time admin** | `TestInterfaceEnabled` | Port state, partner, power direction, the negotiated PD contract, the supply's full PDO list, and cable e-marker data *where the controller supports it*. |
+| **One-time admin** | `TestInterfaceEnabled` | Port state, partner, power direction, the negotiated PD contract, the source power objects `GET_PDOS` reports for each side (up to the seven SPR objects; EPR objects from position 8 are not requested, because UCSI's offset and count stop at 7), and cable e-marker data *where the controller supports it*. |
 
 The first tier is the better first-run experience by a distance, and it is the answer to the "no
 video" half of the headline claim. It also means a machine that cannot do UCSI at all is not a
@@ -280,3 +329,193 @@ ucsiprobe --disable-test-interface     # elevated: puts the machine back as foun
 Diagnostic modes used during the spike, kept because they are how the above was found:
 `--discover` (buffer shape sweep) and `--sequence` (call ordering experiments).
 
+
+## A narrow second path to cable information: the USB4 trace events
+
+Found while checking the cable verdict. Windows' USB4 drivers emit TraceLogging rundown events
+describing the domain, from two providers: `Microsoft.Windows.USB.USB4.HostRouter` describes the
+host interface and whether the domain is powered down, and `Microsoft.Windows.USB.USB4.DeviceRouter`
+describes each router, its ports and its protocol adapters. One port field is documented as
+coming from the cable rather than the link: `CableUsb4Version` on `PortInformation`, which
+Microsoft's table says is copied from `PORT_CS_18[7:0]`, "Cable USB Version". It is not the
+e-marker's identity, but it is the Connection Manager's knowledge of the cable, which this
+machine's UCSI controller never exposes. The router event also carries a `CableInfo` field, which
+Microsoft's table does not list at all, so nothing is known about what it holds.
+
+Captured on the ThinkPad T16 Gen 2 (AMD), elevated, with a DisplayPort adapter on connector 2 and
+nothing on the USB4 port:
+
+```
+logman create trace portmark-usb4 -p {575BA31F-2B45-58C2-64FD-F5DC757B6137} 0xFFFFFFFFFFFFFFFF 0xFF -o usb4.etl -ets
+logman update trace portmark-usb4 -p {AE795D36-2B11-5EFB-C7E0-5D552BC55D6C} 0xFFFFFFFFFFFFFFFF 0xFF -ets
+logman stop portmark-usb4 -ets
+tracerpt usb4.etl -o usb4.xml -of XML -y
+
+DeviceRouterInformation  RouterUSB4Version=0x20  ConnectionManagerUSB4Version=0x10
+                         VendorID=0x438 (AMD)  ProductID=0x20A  CableInfo=0x0
+PortInformation          IsDFP=1  SupportedLinkSpeeds=0xC  SupportedLinkWidths=0x3
+                         CurrentLinkSpeed=0x0  CableUsb4Version=0x0  Tbt3CompatibleMode=0  IsLastPort=1
+```
+
+The full set of events in that capture, in order: `RundownStart`, `HostRouterInformationPci`,
+`DomainSleepInformation` (`IsDomainPoweredDown=1`), `RundownComplete` from the host router provider,
+and the same four again; then `RundownStart`, `DeviceRouterInformation`, `PortInformation`,
+`USB3AdapterInformation` (adapter 4), `PCIeAdapterInformation` (5), `DPAdapterInformation` (6 and
+7) and `RundownComplete` from the device router provider. The host router's rundown appears twice,
+once when the session was created and again when the second provider was added, so enabling a
+provider is what triggers a rundown, and a reader has to expect repeats.
+
+Several things to note.
+
+- The root router's `PortInformation` reports exactly one port (`IsLastPort=1`, lane adapters 2
+  and 3), which matches the machine: only connector 1 is USB4. The event does not name a UCSI
+  connector, so that pairing is this machine's layout, not something the event says.
+- The link fields read zero because the host router reported the domain powered down. Zero there
+  is no link, not a slow one, and not a reading to decode: `AdapterState=0x0` would name
+  "disabled" and `CableUsb4Version=0x0` would look like a value, but a powered-down domain's
+  registers say nothing, and `CurrentLinkSpeed=0x0` is not a defined speed anyway. They need a USB4 or Thunderbolt device
+  on that port to mean anything, and that capture has not been made yet. `SupportedLinkSpeeds=0xC`
+  and `SupportedLinkWidths=0x3` are capability registers and do mean something already: Gen 2 and
+  Gen 3, single or dual lane.
+- The session needs administrator rights. `Get-WinEvent` cannot decode these self-describing
+  events: it returned all 17 with no name and no fields, and error 15003 in place of the payload.
+  `tracerpt` decodes them, while warning that "some events do not match the schema".
+- The emitted names differ from Microsoft's table. The port field is `CableUsb4Version`, where the
+  table says `CableUsbVersion` and types it Boolean for an eight-bit register field; the router
+  event says `VendorID` and `ProductID` where the table says `VendorId` and `ProductId`. The events
+  also carry fields the table does not list: `RouterUSB4Version`, `ConnectionManagerUSB4Version`,
+  `HostFirmwareVersion`, `CableInfo` and `LastPowerUpTimeInMs` on the router; `Lane0AdapterVersion`,
+  `HECError`, `FlowControlError`, `HECErrors`, `Lane1AdapterState`, the two
+  `Lane*AdapterLogicalLayerErrors`, `CLxSupport`, `CLxEnable` and `IsLastPort` on the port;
+  `MaximumSupportedLinkRate` on the USB 3 adapter, `DPTxBwAllocationModeEnable` on the DisplayPort
+  adapters, and `IsLastAdapter` on all of them. Read the names from the emitted events, not the page.
+- Nothing published that portmark can cite defines the encoding of `CableUsb4Version`'s eight bits,
+  so it is reported raw and not turned into a cable version.
+- Tunnelled protocols are per adapter, not per port: each `USB3AdapterInformation`,
+  `PCIeAdapterInformation` and `DPAdapterInformation` carries the driver's own `IsTunneled` flag,
+  and `AdapterType` names the adapter. Microsoft documents `AdapterType` as `ADP_CS_2[23..0]`, but
+  every adapter here also has bit 24 set (`0x1200101` for USB 3 downstream), which neither
+  Microsoft's page nor the register definitions explain.
+
+`portmark usb4` runs this recipe (elevated, for three seconds, under a `Global\portmark-usb4`
+mutex so two captures cannot stop each other's session) and decodes the XML with those rules. It
+only decodes after `logman stop` has succeeded, and it stops the session and deletes the temporary
+files on every path; if either of those fails, it says so, naming the session and the folder left
+behind. `portmark usb4 --from usb4.xml`
+decodes a capture that has already been made, with no rights needed.
+
+## The cable does say one thing, through the supply
+
+A 100W charger on connector 1 answered a question this machine was supposed to be unable to
+answer. Its power objects are `2C91110A 2CD11200 2CB11400 F4411600`: 5V/3A, 9V/3A, 15V/3A and
+**20V at 5A**. `GET_CABLE_PROPERTY` is still Not Supported, and the cable's alternate modes
+(recipient SOP') are still zero length. But the 5A object is itself evidence about the cable.
+
+Two rules combine:
+
+- A USB-C cable may carry **3A** without declaring anything. Above that it must be electronically
+  marked. There is no unmarked 5A cable.
+- A source must **read that marking, over the cable**, before offering more than 3A. The USB PD
+  compliance tests fail a non-captive source that advertises above 3A without first sending
+  Discover Identity to the cable.
+
+So the charger has already performed the cable read that this PC's controller cannot perform, and
+it published the result in the only place this PC can see: its own advertisement. A supply
+offering 5A is a supply that has satisfied itself the cable carries 5A.
+
+What that licenses, and what it does not:
+
+| | |
+|---|---|
+| Sound | The cable in use carries at least the advertised current |
+| Not sound | That it is electronically marked. A **captive** cable is the standing exception, and captive is indistinguishable from marked from this end, so portmark states both |
+| Not sound | Anything about data speed. A 100W cable can be USB 2.0, and current and speed are unrelated |
+| Not sound | Anything the cable itself said. The claim rests on the supply's word |
+
+This is the only deduction portmark makes. It lives in its own `inferred` object in the JSON,
+separate from the fields the cable reported, with the observation, the rule and the conclusion
+each stated so a reader can check the reasoning rather than trust it.
+
+The threshold catches more than 5A chargers. The 65W Lenovo supply advertises 20V at 3.25A, which
+is also above 3A, and that supply has a captive cable: the exception is not hypothetical. A 30W
+supply tops out at 3A and licenses nothing, so portmark says nothing.
+
+## The ninth byte, and a fault the rest of the machine denied
+
+`GET_CONNECTOR_STATUS` returns nine bytes on this controller and portmark decoded eight of them.
+The ninth carries the battery charging status at bits 64 and 65, which is the field Windows drives
+its own slow-charging notification from. Reading it cost nothing: the byte was already on the wire.
+
+| Connector | Ninth byte | Meaning |
+|---|---|---|
+| 1, charger attached | `0x01` | nominal charging rate |
+| 2, supplying a DisplayPort adapter | `0x00` | not charging |
+
+Decoding it turned up a disagreement worth more than the field itself. With a 100W charger on
+connector 1:
+
+```
+Supply offers   5V/3A, 9V/3A, 15V/3A, 20V at 5A     (2C91110A 2CD11200 2CB11400 F4411600)
+Contract        5V at 3A, 15W                        (RDO 0x1304B12C, object position 1)
+Controller      nominal charging rate                 (status byte 8 = 0x01)
+Battery         46 percent, falling to 43 during the session
+Windows         Charging = True, ChargeRate = 0 throughout
+```
+
+Sampled every two seconds for twelve seconds, the contract never moved, so it is not a transient
+caught mid-negotiation. Sampled 45 seconds apart, the battery fell by 590 mWh, about 47W of net
+drain. The machine was running down on a 100W charger while both Windows and the port controller
+reported it as charging normally.
+
+Two conclusions for the product:
+
+- **The controller's charging status cannot be the only signal.** It said nominal throughout. A
+  tool that reported only that field would have reported that everything was fine.
+- **The measurement is the offer against the contract**, both read from the hardware, and it is
+  what portmark now reports. The controller's opinion is shown beside it rather than instead of
+  it, and where they disagree, both are printed.
+
+The battery charge is read through `GetSystemPowerStatus` for one purpose. A nearly full battery
+draws very little and that is correct behaviour, so without the charge the honest wording has to
+offer that explanation, and here it would have been the wrong one. At 43 percent it is ruled out.
+The charge is deliberately not used to decide whether the battery is charging: Windows reported
+charging while the battery fell, and the WMI charge rate read zero throughout, so neither is
+evidence of anything.
+
+This machine still cannot report a cable. It can now report that it is being starved by one.
+
+## An iPhone, and the limit of the current-mode index
+
+Connector 2 was read with two different devices on it, and the readings are byte for byte the
+same:
+
+```
+                     status                 CURRENT_CAM  partner modes  alt mode flag
+DisplayPort adapter  00003B402CB1041300     01           (none)         clear
+iPhone               00003B402CB1041300     01           (none)         clear
+```
+
+The adapter genuinely had DisplayPort entered: its Billboard descriptor says so independently.
+The iPhone, with no display attached, almost certainly did not. Index 1 is DisplayPort in that
+port's mode list in both cases, and nothing available on this machine tells the two apart. The
+controller never lists a partner's modes and never sets the alternate mode flag, so its index is
+the only signal and it cannot be checked.
+
+portmark therefore still names the mode, because on the adapter it was right and withholding it
+would have lost a true answer, but it marks every such naming as uncorroborated in both the human
+output and the JSON. Naming it plainly would have been right once and wrong once, and there is no
+way from here to know which time.
+
+The iPhone also settles two ranked leads, both negative on this hardware:
+
+- **Partner sink PDOs.** `GET_PDOS` for the partner's sink capability returns four zero bytes with
+  the phone attached. The controller does not describe a partner's power capability any more than
+  it describes its modes.
+- **The source capability type field.** Sweeping `GET_PDOS` with capability types 0, 1 and 2
+  returns identical data on both connectors; type 3 returns the Error indicator. The controller
+  does not distinguish current, advertised and maximum, so there is nothing there to report.
+
+One thing the phone did answer cleanly. It is on a USB-C port, confirmed by
+`IOCTL_USB_GET_PORT_CONNECTOR_PROPERTIES`, which reports the connector type per hub port and needs
+no elevation. It declares USB 2.1 and negotiated 480 Mbps, so the link is the phone's own ceiling
+rather than a cable limit, and portmark correctly does not flag it as underperforming.

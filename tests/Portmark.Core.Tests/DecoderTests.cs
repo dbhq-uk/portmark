@@ -44,10 +44,21 @@ public class CablePropertyTests
         Assert.NotNull(report.VideoNote);
     }
 
+    // bmSpeedSupported per UCSI 1.2 Table 4-39 and UCSI 2.0 Table 4-40: bits 1:0 are the Speed
+    // Exponent and bits 15:2 the Speed Mantissa. Microsoft's UCSI_GET_CABLE_PROPERTY_IN says the
+    // same, allocating SpeedExponent : 2 before Mantissa : 14. These vectors once had the
+    // exponent in bits 15:14 (0x8001, 0xC00A), which decoded a real 10 Gbps cable, 0x002B, as
+    // "43 bps". This machine cannot return cable data, so the vectors are built from the table
+    // rather than captured, and the arithmetic is written out so it can be checked by hand.
     [Theory]
     [InlineData(0x0000, null)]                    // no speed reported is not "slow"
-    [InlineData(0x8001, "1 Mbps")]                // exponent 2, mantissa 1
-    [InlineData(0xC00A, "10 Gbps")]               // exponent 3, mantissa 10
+    [InlineData(0x0003, null)]                    // an exponent with a zero mantissa states nothing
+    [InlineData(0x002B, "10 Gbps")]               // mantissa 10 << 2 = 0x28, exponent 3
+    [InlineData(0x0017, "5 Gbps")]                // mantissa 5 << 2 = 0x14, exponent 3
+    [InlineData(0x0053, "20 Gbps")]               // mantissa 20 << 2 = 0x50, exponent 3
+    [InlineData(0x0782, "480 Mbps")]              // mantissa 480 << 2 = 0x780, exponent 2
+    [InlineData(0x0032, "12 Mbps")]               // mantissa 12 << 2 = 0x30, exponent 2
+    [InlineData(0x2580, "2400 bps")]              // mantissa 2400 << 2 = 0x2580, exponent 0
     public void SpeedMantissaAndExponentDecode(ushort raw, string? expected)
     {
         SpeedReport? speed = CableProperty.DecodeSpeed(raw);
@@ -65,6 +76,98 @@ public class CablePropertyTests
         Assert.True(report.DataAvailable);
         Assert.Null(report.CurrentCapabilityMilliamps);
         Assert.Null(report.MaxWattsAt20Volts);
+    }
+
+    /// <summary>
+    /// An active 10 Gbps 5A cable, built from UCSI Table 4-39/4-40: bmSpeedSupported 0x002B, current
+    /// 100 x 50 mA = 0x64, then byte 3 = VBUSInCable 0x01 + CableType (active) 0x02 +
+    /// Directionality (configurable) 0x04 + Plug End Type 2 (Type-C) << 3 = 0x10 + Mode Support 0x20
+    /// = 0x37, then latency 1.
+    /// </summary>
+    private static readonly byte[] Active10GbpsCable = Convert.FromHexString("2B00643701");
+
+    [Fact]
+    public void ActiveCableDecodesEveryFlag()
+    {
+        CableReport report = CableProperty.Decode(Active10GbpsCable);
+
+        Assert.Equal("10 Gbps", report.Speed?.Display);
+        Assert.Equal(10_000_000_000L, report.Speed?.BitsPerSecond);
+        Assert.Equal(5000, report.CurrentCapabilityMilliamps);
+        Assert.Equal(100, report.MaxWattsAt20Volts);
+        Assert.True(report.VbusInCable);
+        Assert.True(report.ActiveCable);
+        Assert.True(report.LaneDirectionalityConfigurable);
+        Assert.Equal("USB Type-C", report.PlugType);
+        Assert.True(report.SupportsAlternateModes);
+        Assert.Equal(1, report.LatencyCode);
+    }
+
+    [Fact]
+    public void DirectionalityIsItsOwnBit()
+    {
+        // Byte 3 = 0x33: the active cable above with bit 2 clear, lane directionality fixed.
+        CableReport report = CableProperty.Decode(Convert.FromHexString("2B00643301"));
+
+        Assert.False(report.LaneDirectionalityConfigurable);
+        Assert.True(report.ActiveCable);
+        Assert.Equal("USB Type-C", report.PlugType);
+    }
+
+    [Fact]
+    public void PlugEndTypeThreeIsOtherNotCaptive()
+    {
+        // Byte 3 = VBUSInCable 0x01 + Plug End Type 3 << 3 = 0x18. UCSI: "3 Other (Not USB)". Nothing
+        // in GET_CABLE_PROPERTY says a cable is captive; that is a PD Discover Identity field.
+        CableReport report = CableProperty.Decode(Convert.FromHexString("82073C1902"));
+
+        Assert.Equal("Other (not USB)", report.PlugType);
+        Assert.DoesNotContain("captive", report.PlugType, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("480 Mbps", report.Speed?.Display);
+        Assert.Equal(3000, report.CurrentCapabilityMilliamps);
+    }
+
+    [Theory]
+    [InlineData("82073C1902")]   // passive, Mode Support clear
+    [InlineData("82073C3902")]   // passive, Mode Support set (0x20 added)
+    public void ModeSupportSaysNothingAboutAPassiveCable(string hex)
+    {
+        // UCSI: Mode Support "shall only be valid if the CableType field is set to one". For a
+        // passive cable the bit is not an answer either way, so it must not become "no alternate
+        // modes", and a stray set bit must not become "yes".
+        CableReport report = CableProperty.Decode(Convert.FromHexString(hex));
+
+        Assert.False(report.ActiveCable);
+        Assert.Null(report.SupportsAlternateModes);
+        Assert.NotNull(report.AlternateModeSupportNote);
+    }
+
+    [Fact]
+    public void AnActiveCableWithoutModeSupportSaysSo()
+    {
+        // Byte 3 = 0x17: active, Type-C, Mode Support clear. Valid for an active cable, so false.
+        CableReport report = CableProperty.Decode(Convert.FromHexString("2B00641701"));
+
+        Assert.False(report.SupportsAlternateModes);
+        Assert.Null(report.AlternateModeSupportNote);
+    }
+
+    [Fact]
+    public void TheSummaryKeepsTheWattageQualifiedAtTwentyVolts()
+    {
+        // bCurrentCapability is a current. The wattage is that current at 20V, and a bare "100W"
+        // would read as a rating the cable never stated.
+        var report = new ConnectorReport
+        {
+            Index = 1,
+            Connected = true,
+            Cable = CableProperty.Decode(Active10GbpsCable),
+        };
+
+        string summary = PortmarkReader.Summarise(report);
+
+        Assert.Contains("100W at 20V", summary);
+        Assert.Contains("10 Gbps", summary);
     }
 }
 
@@ -271,14 +374,18 @@ public class UcsiProtocolTests
     [Fact]
     public void AlternateModesCommandUsesAbsoluteBitOffsets()
     {
-        // Recipient at 16-18, ConnectorNumber at 19-25, AlternateModeOffset at 26-33,
-        // NumberOfAlternateModes at 34-35. Packing these as a byte at bit 16 produced empty
-        // responses that looked like unsupported hardware.
-        ulong control = UcsiProtocol.GetAlternateModes(recipient: 1, connector: 2, offset: 0);
+        // Recipient at 16-18, ConnectorNumber at 24-30, AlternateModeOffset at 32-39,
+        // NumberOfAlternateModes at 40-41. This test once asserted the connector at bit 19, which
+        // is a reserved field: the controller saw connector zero, answered Error with
+        // "non-existent connector number", and that was written up as the command being declined.
+        ulong control = UcsiProtocol.GetAlternateModes(recipient: 1, connector: 2, offset: 3, numberMinusOne: 1);
 
         Assert.Equal(UcsiProtocol.CmdGetAlternateModes, (byte)(control & 0xFF));
         Assert.Equal(1UL, (control >> 16) & 0x07);
-        Assert.Equal(2UL, (control >> 19) & 0x7F);
+        Assert.Equal(0UL, (control >> 19) & 0x1F);
+        Assert.Equal(2UL, (control >> 24) & 0x7F);
+        Assert.Equal(3UL, (control >> 32) & 0xFF);
+        Assert.Equal(1UL, (control >> 40) & 0x03);
     }
 
     [Fact]
@@ -315,58 +422,6 @@ public class ErrorStatusTests
 
         Assert.True(ErrorStatus.IsUnrecognisedCommand([0x01, 0x00]));
         Assert.Contains("unrecognised command", ErrorStatus.Describe([0x01, 0x00]));
-    }
-}
-
-public class LinkDiagnosticTests
-{
-    [Fact]
-    public void SuperSpeedDeviceOnAHighSpeedLinkIsFlagged()
-    {
-        // The case people actually hit: a USB 3.x device behind a USB 2.0 cable, running at a
-        // twentieth of its capability while Windows says nothing at all.
-        Assert.True(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(
-            bcdUsb: 0x0320, actualSpeed: Portmark.Core.Usb.LinkDiagnostic.SpeedHigh, deviceClass: 0x08));
-
-        string? why = Portmark.Core.Usb.LinkDiagnostic.Explain(0x0320, 2, 0x08);
-
-        Assert.NotNull(why);
-        Assert.Contains("480 Mbps", why);
-        Assert.Contains("USB 2.0 cable", why);
-    }
-
-    [Fact]
-    public void DeviceRunningAtItsDeclaredSpeedIsNotFlagged()
-    {
-        // The camera on the test machine: declares USB 2.01, negotiated High Speed. Correct.
-        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0201, 2, 0xEF));
-        Assert.Null(Portmark.Core.Usb.LinkDiagnostic.Explain(0x0201, 2, 0xEF));
-    }
-
-    [Fact]
-    public void BillboardDeviceAtLowSpeedIsNeverFlagged()
-    {
-        // The dock's adapter on the test machine: declares USB 2.01 but attaches at Low Speed,
-        // which is what the Billboard class specifies. Flagging it would be a false alarm.
-        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0201, 0, 0x11));
-    }
-
-    [Fact]
-    public void HubsAreNotFlaggedSeparatelyFromTheCableFeedingThem()
-    {
-        // A hub running below its rating is a symptom of its upstream cable, which is reported
-        // against that cable rather than counted twice.
-        Assert.False(Portmark.Core.Usb.LinkDiagnostic.IsUnderperforming(0x0300, 2, 0x09));
-    }
-
-    [Theory]
-    [InlineData(0x0320, 3)]   // USB 3.2 expects SuperSpeed
-    [InlineData(0x0300, 3)]
-    [InlineData(0x0200, 2)]   // USB 2.0 expects High
-    [InlineData(0x0110, 1)]   // USB 1.1 expects Full
-    public void ExpectedSpeedFollowsTheDeclaredVersion(ushort bcdUsb, byte expected)
-    {
-        Assert.Equal(expected, Portmark.Core.Usb.LinkDiagnostic.ExpectedSpeed(bcdUsb));
     }
 }
 

@@ -5,12 +5,22 @@ namespace Portmark.Core.Ucsi;
 /// <summary>
 /// Decodes a UCSI GET_CABLE_PROPERTY response.
 ///
-/// Layout per the UCSI specification, 5 bytes:
-///   bytes 0-1  bmSpeedSupported    bits 0-13 mantissa, bits 14-15 unit exponent
+/// Layout per UCSI 1.2 Table 4-39 and UCSI 2.0 Table 4-40, cross-checked against Linux's struct
+/// ucsi_cable_property, 5 bytes:
+///   bytes 0-1  bmSpeedSupported    bits 1:0 Speed Exponent, bits 15:2 Speed Mantissa
 ///   byte  2    bCurrentCapability  in 50 mA units
-///   byte  3    bit 0 bmVBUSInCable, bit 1 bIsActiveCable, bit 2 bDirectionality,
-///              bits 3-4 bPlugEndType, bit 5 bmModeSupport
-///   byte  4    bits 0-3 bLatency
+///   byte  3    bit 0 VBUSInCable, bit 1 CableType (1 active), bit 2 Directionality,
+///              bits 3-4 Plug End Type, bit 5 Mode Support, bits 6-7 reserved
+///   byte  4    bits 0-3 Latency (bit 32 of the structure), bits 4-7 reserved
+///
+/// The speed fields were the wrong way round once, exponent in bits 15:14 and mantissa in 13:0,
+/// which decoded a 10 Gbps cable, 0x002B, as "43 bps". Both tables and Microsoft's
+/// UCSI_GET_CABLE_PROPERTY_IN (SpeedExponent : 2, then Mantissa : 14) put the exponent at the bottom.
+///
+/// Latency is left at byte 4, as the tables have it: two reserved bits at 30-31, then Latency at 32
+/// for four bits, and Linux reads it as its own byte. Microsoft's structure packs Latency directly
+/// after ModeSupport, at bit 30, with no reserved bits; the tables win. Its codes are USB PD's cable
+/// latency codes and are passed through raw.
 /// </summary>
 public static class CableProperty
 {
@@ -36,7 +46,7 @@ public static class CableProperty
                 Reason = emptyReason
                     ?? "The port controller reported no cable data. The cable carries no e-marker, "
                      + "or nothing is attached.",
-                VideoNote = "Not determinable. UCSI does not report video capability.",
+                VideoNote = "Not determinable from the cable. UCSI does not report a cable's video capability; what the port and the attached device offer is under alternate modes.",
             };
         }
 
@@ -44,34 +54,46 @@ public static class CableProperty
         byte currentRaw = data[2];
         byte flags = data[3];
         int plugType = (flags >> 3) & 0x03;
+        bool active = (flags & 0x02) != 0;
 
         return new CableReport
         {
             DataAvailable = true,
             Speed = DecodeSpeed(speedRaw),
             CurrentCapabilityMilliamps = currentRaw == 0 ? null : currentRaw * 50,
+            // The current at 20V, not a power rating the cable stated. Anything that shows it
+            // says "at 20V".
             MaxWattsAt20Volts = currentRaw == 0 ? null : currentRaw * 50 * 20 / 1000,
             PlugType = PlugTypeName(plugType),
-            ActiveCable = (flags & 0x02) != 0,
+            ActiveCable = active,
             VbusInCable = (flags & 0x01) != 0,
-            SupportsAlternateModes = (flags & 0x20) != 0,
+            LaneDirectionalityConfigurable = (flags & 0x04) != 0,
+            // Mode Support "shall only be valid if the CableType field is set to one". Reading the
+            // bit of a passive cable as "no alternate modes" would be answering a question UCSI
+            // does not let a passive cable be asked.
+            SupportsAlternateModes = active ? (flags & 0x20) != 0 : null,
+            AlternateModeSupportNote = active
+                ? null
+                : "UCSI defines the cable's alternate mode flag only for active cables, so for this passive "
+                + "cable it says nothing either way.",
             LatencyCode = data[4] & 0x0F,
             SupportsVideo = null,
-            VideoNote = "Not determinable. UCSI does not report video capability; "
-                      + "alternate mode support is the closest available signal.",
+            VideoNote = "Not determinable from the cable. UCSI does not report a cable's video "
+                      + "capability; its alternate mode support flag is the closest available signal.",
         };
     }
 
     /// <summary>
-    /// bmSpeedSupported is a mantissa plus a unit exponent. A zero mantissa means the cable did
-    /// not state a speed, which is not the same as the cable being slow.
+    /// bmSpeedSupported is a mantissa (bits 15:2) times a unit the exponent (bits 1:0) selects. A
+    /// zero mantissa means the cable did not state a speed, which is not the same as the cable
+    /// being slow.
     /// </summary>
     public static SpeedReport? DecodeSpeed(ushort raw)
     {
-        int mantissa = raw & 0x3FFF;
+        int mantissa = raw >> 2;
         if (mantissa == 0) return null;
 
-        int exponent = (raw >> 14) & 0x03;
+        int exponent = raw & 0x03;
         (string unit, long multiplier) = exponent switch
         {
             0 => ("bps", 1L),
@@ -95,7 +117,9 @@ public static class CableProperty
         0 => "USB Type-A",
         1 => "USB Type-B",
         2 => "USB Type-C",
-        3 => "Other or captive",
+        // UCSI: "3 Other (Not USB)". This was once "Other or captive", but nothing in this
+        // response says a cable is captive; that is a field of the PD cable VDO.
+        3 => "Other (not USB)",
         _ => "Unknown",
     };
 }
@@ -125,6 +149,12 @@ public static class Capability
     public const int BitExternalSupplyNotification = 6;
     public const int BitPdResetNotification = 7;
 
+    /// <summary>
+    /// GET_PD_MESSAGE supported: UCSI 1.2 Table 4-54 and UCSI 2.0 Table 4-65, Linux
+    /// UCSI_CAP_GET_PD_MESSAGE BIT(8). Not in Microsoft's UCSI 1.1 era structure, which stops at bit 7.
+    /// </summary>
+    public const int BitGetPdMessage = 8;
+
     public static PpmFeatureReport? Decode(ReadOnlySpan<byte> data)
     {
         if (data.Length < 9) return null;
@@ -139,6 +169,7 @@ public static class Capability
             AlternateModeDetailsAvailable = (optional & (1u << BitAlternateModeDetails)) != 0,
             PowerDataObjectDetailsAvailable = (optional & (1u << BitPdoDetails)) != 0,
             CableDetailsAvailable = (optional & (1u << BitCableDetails)) != 0,
+            GetPdMessageSupported = (optional & (1u << BitGetPdMessage)) != 0,
             AlternateModeCount = data[8],
             BatteryChargingVersion = data.Length >= 12 ? Bcd(data[10], data[11]) : null,
             PowerDeliveryVersion = data.Length >= 14 ? Bcd(data[12], data[13]) : null,
@@ -229,6 +260,23 @@ public static class ConnectorStatus
         report.PowerOperationMode = PowerOperationModeName((int)Bits(data, 16, 3));
         report.PowerDirection = Bit(data, 20) ? "supplying" : "consuming";
         report.PartnerType = PartnerTypeName((int)Bits(data, 29, 3));
+
+        // Partner flags: bit 0 USB, bit 1 Alternate Mode, bits 2-3 USB4 Gen 3 and Gen 4 (UCSI 2.0).
+        // With the 65W charger attached this reads 0x01: USB, no alternate mode, which is the
+        // status-side evidence that the current-mode byte of 0 on that port means nothing.
+        report.PartnerFlags = (int)Bits(data, 21, 8);
+        report.PartnerAlternateModeFlag = Bit(data, 22);
+
+        // Bits 64-65, the ninth byte, present from UCSI 1.0. This was read off the wire and
+        // discarded until it turned out to be the field Windows drives its own slow-charging
+        // notification from. UCSI defines it only while the connector is a sink, so a port supplying
+        // power leaves it unset rather than reporting whatever the byte happens to hold.
+        if (data.Length >= 9 && !Bit(data, 20))
+        {
+            int charging = (int)Bits(data, 64, 2);
+            report.BatteryChargingStatusCode = charging;
+            report.BatteryChargingStatus = ChargeDiagnostic.StatusLabel(charging);
+        }
     }
 
     public static string PowerOperationModeName(int mode) => mode switch
@@ -304,4 +352,282 @@ public static class ErrorStatus
 
     public static bool IsUnrecognisedCommand(ReadOnlySpan<byte> data)
         => data.Length >= 2 && (data[0] & 0x01) != 0;
+}
+
+/// <summary>
+/// Decodes GET_ALTERNATE_MODES: six bytes per mode, a 16-bit SVID then a 32-bit mode ID, up to
+/// two modes per response. Captured from the ThinkPad T16 Gen 2 (AMD), whose connector 1 lists
+/// 0x17EF (Lenovo), 0x8087 (Intel Thunderbolt 3) and 0xFF01 (DisplayPort), and whose connector 2
+/// lists the first and last of those: the USB4 port and the plain USB-C port, respectively.
+///
+/// A response shorter than six bytes carries no modes. That is the normal answer for a partner
+/// that offers none, such as a charger, and must not be read as a failure.
+/// </summary>
+public static class AlternateModes
+{
+    public const int BytesPerMode = 6;
+
+    /// <summary>
+    /// Upper bound on modes walked per recipient. The offset field is a byte, but a controller
+    /// that never ends its list must not be walked for 256 round trips.
+    /// </summary>
+    public const int MaxModes = 16;
+
+    /// <summary>
+    /// Decodes one response. A record whose SVID is zero is not a mode: 0x0000 is not an assigned
+    /// SVID, and an all-zero response is the hardware saying nothing. Rejected records still
+    /// consume their offset, so the offsets of the modes that follow stay true to the controller.
+    /// </summary>
+    public static List<PortAlternateModeReport> Decode(ReadOnlySpan<byte> data, int firstOffset = 0)
+    {
+        var modes = new List<PortAlternateModeReport>();
+        for (int i = 0, record = 0; i + BytesPerMode <= data.Length; i += BytesPerMode, record++)
+        {
+            ushort svid = (ushort)(data[i] | (data[i + 1] << 8));
+            if (svid == 0) continue;
+
+            uint mid = BitConverter.ToUInt32(data.Slice(i + 2, 4));
+            modes.Add(new PortAlternateModeReport
+            {
+                Offset = firstOffset + record,
+                Svid = $"0x{svid:X4}",
+                Name = Usb.BillboardReader.SvidName(svid),
+                ModeId = $"0x{mid:X8}",
+                IsDisplayPort = svid == Usb.BillboardReader.SvidDisplayPort,
+            });
+        }
+        return modes;
+    }
+
+    /// <summary>
+    /// Walks the list for one recipient. <paramref name="query"/> issues GET_ALTERNATE_MODES at an
+    /// offset and returns the result. It is a parameter so the walk can be tested against
+    /// controllers that answer one mode per page, repeat a page, or fail part way through.
+    ///
+    /// The walk advances by the number of records the controller returned, not by a fixed two,
+    /// and ends on an empty page. A page identical to the previous one means the controller is
+    /// ignoring the offset, and the list is reported incomplete rather than padded with
+    /// duplicates. A failure after some modes keeps them and says the list is incomplete; a
+    /// failure before any says there is no data. Both differ from a controller that simply lists
+    /// nothing, which is a complete, empty answer. The first version collapsed all four into an
+    /// empty list, which then read as "none".
+    /// </summary>
+    public static AlternateModeListReport Enumerate(Func<byte, UcsiResult> query)
+    {
+        var report = new AlternateModeListReport();
+        byte[]? previousPayload = null;
+        byte offset = 0;
+
+        while (true)
+        {
+            UcsiResult r = query(offset);
+
+            string? failure = !r.Ok ? r.Error ?? "the request failed"
+                : r.NotSupported ? "the controller reports GET_ALTERNATE_MODES as not supported"
+                : r.Errored ? "the controller returned an error"
+                : null;
+            if (failure is not null)
+            {
+                report.DataAvailable = report.Modes.Count > 0;
+                report.Reason = report.Modes.Count > 0
+                    ? $"The list stopped after {report.Modes.Count} mode(s): {failure}."
+                    : $"{char.ToUpperInvariant(failure[0])}{failure[1..]}.";
+                return report;
+            }
+
+            report.DataAvailable = true;
+
+            int records = r.Payload.Length / BytesPerMode;
+            if (records == 0)
+            {
+                report.Complete = true;
+                return report;
+            }
+
+            if (previousPayload is not null && r.Payload.AsSpan().SequenceEqual(previousPayload))
+            {
+                report.Reason = $"The controller returned the same page at offset {offset} as at "
+                              + "the previous offset, so the list cannot be walked and may be incomplete.";
+                return report;
+            }
+            previousPayload = r.Payload;
+
+            report.Modes.AddRange(Decode(r.Payload, offset));
+            offset = (byte)(offset + records);
+
+            if (offset >= MaxModes)
+            {
+                report.Reason = $"Stopped after {MaxModes} modes without the controller ending the list.";
+                return report;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Turns the two lists, the attachment state and the raw current-mode byte into the sentence
+    /// portmark prints and the mode it names, if it names one. A mode is named only when the
+    /// controller's index points at a port mode that the partner also offers. Everything else is
+    /// stated as unknown, with the reason, never as absent.
+    /// </summary>
+    public static (string Note, PortAlternateModeReport? Active, bool Confirmed) Interpret(
+        AlternateModeListReport supported, AlternateModeListReport? partner, bool? connected, byte? currentCam,
+        bool? partnerAlternateModeFlag = null)
+    {
+        if (!supported.DataAvailable)
+            return ($"This port's alternate modes could not be listed. {supported.Reason}", null, false);
+
+        if (supported.Modes.Count == 0)
+            return (supported.Complete
+                ? "This controller lists no alternate modes for this port."
+                : $"This controller listed no alternate modes for this port but did not end the list. {supported.Reason}",
+                null, false);
+
+        string canEnter = $"This port can enter: {Names(supported.Modes)}"
+                        + (supported.Complete ? "." : $" (list incomplete: {supported.Reason})");
+
+        if (connected is null)
+            return ($"{canEnter} Whether anything is attached could not be read, so the partner was not asked.", null, false);
+        if (connected == false)
+            return ($"{canEnter} Nothing is attached.", null, false);
+
+        // What the partner said, if anything. On this controller the partner list is empty and the
+        // status flag is clear even with a DisplayPort adapter whose Billboard says DisplayPort
+        // was entered, so neither can veto the controller's own index. They corroborate it when
+        // they are present, and that is all.
+        bool partnerListed = partner is { DataAvailable: true } && partner.Modes.Count > 0;
+        string partnerText = partner is null || !partner.DataAvailable
+            ? $"The attached device's modes could not be read{(partner?.Reason is { } why ? $": {why}" : ".")}"
+            : partner.Modes.Count == 0
+                ? partner.Complete
+                    ? "The attached device listed no alternate modes."
+                    : $"The attached device listed no alternate modes but did not end the list. {partner.Reason}"
+                : $"The attached device offers: {Names(partner.Modes)}"
+                  + (partner.Complete ? "." : $" (list incomplete: {partner.Reason})");
+
+        // The controller's own answer. 0xFF is the specification's "no mode".
+        if (currentCam is null)
+            return ($"{canEnter} {partnerText} The controller did not report a current mode, so whether one is in use is unknown.", null, false);
+        if (currentCam == 0xFF)
+            return ($"{canEnter} {partnerText} The controller reports no alternate mode in use.", null, false);
+
+        PortAlternateModeReport? candidate = supported.Modes.FirstOrDefault(m => m.Offset == currentCam);
+        if (candidate is null)
+            return ($"{canEnter} {partnerText} The controller's current-mode index {currentCam} does not match "
+                  + "a listed port mode, so which mode is in use is unknown.", null, false);
+
+        // A complete partner list that lacks the mode contradicts the index. An incomplete one does
+        // not: the mode may be in the part that was never read.
+        bool deviceListsIt = partnerListed && partner!.Modes.Any(p => p.Svid == candidate.Svid);
+        if (partnerListed && partner!.Complete && !deviceListsIt)
+            return ($"{canEnter} {partnerText} The controller's current-mode index points at {candidate.Name}, "
+                  + "which the device did not list, so which mode is in use could not be confirmed.", null, false);
+
+        // Only the status flag speaks to operation. A device that lists a mode can enter it, which
+        // is not the same as having entered it, so the list never confirms on its own.
+        if (partnerAlternateModeFlag == true)
+            return ($"{canEnter} {partnerText} The controller reports {candidate.Name} as the current mode, and the "
+                  + "connector status says an alternate mode is in operation." + (deviceListsIt ? " The device offers it." : ""),
+                    candidate, true);
+
+        // Index 0 is ambiguous, being also what this controller reports when no mode is in use,
+        // against the specification's 0xFF.
+        //
+        // A non-zero index is the controller's own statement and is passed on as exactly that,
+        // unconfirmed. It is worth passing on and worth marking: a DisplayPort adapter on
+        // connector 2 gave index 1, DisplayPort in that port's list, and its Billboard
+        // independently confirmed the mode was entered. An iPhone on the same port gave the same
+        // index 1 with no display in sight, and nothing available here can tell the two apart.
+        // Naming the mode without the caveat would have been right once and wrong once.
+        if (currentCam == 0)
+            return ($"{canEnter} {partnerText} The controller's current-mode index is 0, which it also reports "
+                  + "for an empty port, so no mode is confirmed in use.", null, false);
+
+        // The caveat says only what the inputs say. It is built from them rather than from what
+        // this controller usually does.
+        string device = deviceListsIt
+            ? "The device offers it, but offering a mode is not the same as having entered it."
+            : partner is null || !partner.DataAvailable
+                ? "The attached device's modes could not be read."
+                : partner.Modes.Count == 0
+                    ? "The attached device listed no modes."
+                    : "The attached device's list is incomplete and does not include it.";
+        string flag = partnerAlternateModeFlag is null
+            ? "The connector status did not say whether one is in operation."
+            : "The connector status says no alternate mode is in operation.";
+        return ($"{canEnter} {partnerText} The controller reports {candidate.Name} as the current mode. "
+              + $"Nothing here corroborates it. {device} {flag}", candidate, false);
+    }
+
+    private static string Names(IEnumerable<PortAlternateModeReport> modes)
+        => string.Join(", ", modes.Select(m => m.Name));
+}
+
+/// <summary>
+/// What the power contract says about the cable, on hardware that cannot read the cable at all.
+///
+/// This is the only deduction portmark makes, and it exists because the deduction is sound and
+/// the alternative is staying silent about something the user can act on. Two rules combine.
+/// USB Type-C requires any cable carrying more than 3A to be electronically marked, 3A being what
+/// an unmarked cable may carry. USB Power Delivery then requires a source to read that marking,
+/// over the cable, before it offers more than 3A: the compliance tests fail a non-captive source
+/// that advertises above 3A without first sending Discover Identity to the cable.
+///
+/// So a supply advertising 5A has already done the cable read that this PC's controller cannot
+/// do. portmark reports the conclusion and the evidence, never as something the cable said.
+///
+/// Two things it deliberately does not conclude. A captive cable is the standing exception, and
+/// captive is indistinguishable from marked from this end, so both are stated. And current says
+/// nothing about data speed: a 100W cable can be USB 2.0.
+///
+/// Only the attached supply's advertisement counts, and only while this PC is drawing from it.
+/// This PC's own list is what it can supply, not what it advertised over this cable, and when this
+/// PC is the source the attached device never had to read the cable at all.
+/// </summary>
+public static class CableInference
+{
+    /// <summary>What any USB-C cable may carry without declaring itself, in milliamps.</summary>
+    public const int UnmarkedCableLimitMilliamps = 3000;
+
+    /// <summary>
+    /// The deduction for a connector, or null when it does not apply: the cable spoke for itself,
+    /// nothing is attached, or this PC is not the one drawing power.
+    /// </summary>
+    public static CableInferenceReport? FromConnector(ConnectorReport report)
+    {
+        if (report.Cable.DataAvailable) return null;
+        if (report.Connected != true || report.PowerDirection != "consuming") return null;
+        return FromPower(report.Power);
+    }
+
+    public static CableInferenceReport? FromPower(PowerReport power)
+    {
+        if (!power.DataAvailable) return null;
+
+        // Only objects that decoded. An unrecognised object might hold anything, and guessing a
+        // current out of one would be inventing the evidence for the conclusion.
+        PowerObjectReport? highest = power.PartnerSource
+            .Where(p => p.Kind != "unrecognised" && p.MaxCurrentMilliamps is not null)
+            .MaxBy(p => p.MaxCurrentMilliamps);
+
+        if (highest?.MaxCurrentMilliamps is not int current || current <= UnmarkedCableLimitMilliamps)
+            return null;
+
+        return new CableInferenceReport
+        {
+            MinimumCurrentRatingMilliamps = current,
+            Evidence = $"The attached supply advertises {highest.Display}.",
+            Basis = $"A USB-C cable may carry {Amps(UnmarkedCableLimitMilliamps)} without declaring anything about "
+                  + "itself. Above that it has to be electronically marked, and a supply has to read that marking "
+                  + "over the cable before offering more. The one exception is a captive cable, which its supply "
+                  + "knows by construction.",
+            Conclusion = $"So, if the supply follows USB Power Delivery, the cable in use is rated for at least "
+                       + $"{Amps(current)}, on the word of the supply rather "
+                       + "than of the cable. Whether it is captive or electronically marked cannot be told apart "
+                       + "from this PC. This says nothing about its data speed: a cable can carry full power at "
+                       + "USB 2.0 speed.",
+        };
+    }
+
+    // Two places, so 3.25A is never rounded up into a rating the supply did not state.
+    private static string Amps(int milliamps) => $"{milliamps / 1000.0:0.##}A";
 }

@@ -128,10 +128,16 @@ public partial class App : System.Windows.Application
 
         Task.Run(() =>
         {
-            foreach (IReadOnlyList<UsbChange> batch in UsbWatcher.Watch(TimeSpan.FromSeconds(2), token))
+            foreach (UsbWatchBatch batch in UsbWatcher.WatchWithFaults(TimeSpan.FromSeconds(2), token))
             {
-                foreach (UsbChange change in batch)
+                foreach (UsbChange change in batch.Changes)
                     Dispatcher.Invoke(() => Notify(change));
+
+                // A device that fails enumeration never arrives, so the hub's fault status is the
+                // only sign of it. The watcher yields each fault once per occurrence, from the same
+                // hub poll: the port controller is not asked.
+                foreach (UsbPortStatusReport fault in batch.Faults)
+                    Dispatcher.Invoke(() => NotifyFault(fault));
 
                 // A USB device arriving says nothing about the port controller, so this refresh
                 // deliberately does not force a UCSI read. Polling the controller on every device
@@ -168,14 +174,16 @@ public partial class App : System.Windows.Application
 
         try
         {
-            PortmarkReport report = Portmark.Core.PortmarkReader.Read();
+            PortmarkReport report = Portmark.Core.PortmarkReader.Read(requestIdentity: false);
             ConnectorReport? charging = report.Connectors
                 .FirstOrDefault(c => c.Connected == true && c.PowerDirection == "consuming");
 
             if (charging?.Power is { DataAvailable: true, MaxAvailableMilliwatts: int mw } p && mw > 0)
             {
-                string now = p.Negotiated?.NegotiatedPowerMilliwatts is int drawn
-                    ? $"Drawing {drawn / 1000.0:0.#}W of {mw / 1000.0:0.#}W available"
+                // The contract is what was negotiated, not power measured flowing, so it is named
+                // as a contract.
+                string now = p.Negotiated?.NegotiatedPowerMilliwatts is int contract
+                    ? $"{contract / 1000.0:0.#}W contract, supply offers up to {mw / 1000.0:0.#}W"
                     : $"Supply offers up to {mw / 1000.0:0.#}W";
                 _tray.ShowBalloonTip(5000, "Charger connected", now, Forms.ToolTipIcon.None);
             }
@@ -216,6 +224,26 @@ public partial class App : System.Windows.Application
             : d.Speed;
 
         _tray.ShowBalloonTip(4000, $"Connected: {name}", detail, Forms.ToolTipIcon.None);
+    }
+
+    /// <summary>
+    /// Says which port the hub reports a failed connection on, in the hub's words. The balloon
+    /// names no cause, because nothing read here knows one.
+    /// </summary>
+    private void NotifyFault(UsbPortStatusReport fault)
+    {
+        if (_tray is null) return;
+
+        // The IDs are there only when the hub returned a valid descriptor with the status.
+        string id = fault.VendorId is null
+            ? ""
+            : $" ({PopoverWindow.VendorLabel(fault.VendorId, fault.VendorName)}:{fault.ProductId})";
+
+        _tray.ShowBalloonTip(
+            8000,
+            "USB hub reported a port fault",
+            $"{UsbTopology.HubLabel(fault.HubPath)}, port {fault.Port}{id}: {fault.Description}.",
+            Forms.ToolTipIcon.Warning);
     }
 
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";

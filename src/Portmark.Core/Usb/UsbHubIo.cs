@@ -53,23 +53,42 @@ public static class UsbHubIo
     }
 
     /// <summary>Reads what is attached to a port, or null when the port is empty.</summary>
-    public static unsafe UsbConnection? GetConnection(SafeFileHandle hub, uint port)
+    public static UsbConnection? GetConnection(SafeFileHandle hub, uint port)
+    {
+        byte[]? b = GetConnectionInformation(hub, port);
+        return b is null ? null : ParseConnection(port, b);
+    }
+
+    /// <summary>
+    /// The raw USB_NODE_CONNECTION_INFORMATION_EX for a port, whatever its connection status, or
+    /// null when the hub refuses the request. Kept separate from <see cref="GetConnection"/> so a
+    /// port whose device failed can be reported rather than skipped as empty.
+    /// </summary>
+    public static unsafe byte[]? GetConnectionInformation(SafeFileHandle hub, uint port)
     {
         byte[] b = new byte[1024];
         BitConverter.TryWriteBytes(b, port);
 
+        uint returned;
         fixed (byte* p = b)
         {
             if (!Win32.DeviceIoControl(hub, IoctlGetNodeConnectionInformationEx,
-                                       p, (uint)b.Length, p, (uint)b.Length, out _, IntPtr.Zero))
+                                       p, (uint)b.Length, p, (uint)b.Length, out returned, IntPtr.Zero))
                 return null;
         }
 
+        return returned >= UsbConnectionStatus.ConnectionInformationSize ? b[..(int)returned] : null;
+    }
+
+    /// <summary>Reads the connected device out of a connection record, or null unless DeviceConnected.</summary>
+    public static UsbConnection? ParseConnection(uint port, byte[] b)
+    {
         //  0     ConnectionIndex (4)
         //  4-21  DeviceDescriptor (18)
         //  22    CurrentConfigurationValue   23 Speed   24 DeviceIsHub
         //  25-26 DeviceAddress   27-30 NumberOfOpenPipes   31-34 ConnectionStatus
-        if (BitConverter.ToUInt32(b, 31) != 1) return null;   // 1 == DeviceConnected
+        if (b.Length < UsbConnectionStatus.ConnectionInformationSize) return null;
+        if (BitConverter.ToUInt32(b, 31) != UsbConnectionStatus.DeviceConnected) return null;
 
         return new UsbConnection(
             Port: port,
@@ -86,6 +105,82 @@ public static class UsbHubIo
             ManufacturerStringIndex: b[18],
             ProductStringIndex: b[19],
             SerialStringIndex: b[20]);
+    }
+
+    internal static readonly uint IoctlGetNodeConnectionInformationExV2 = Win32.CtlCode(FileDeviceUsb, 279, 0, 0);
+    internal static readonly uint IoctlGetPortConnectorProperties = Win32.CtlCode(FileDeviceUsb, 278, 0, 0);
+
+    /// <summary>
+    /// Which port, if any, shares this port's physical connector, or null when the hub does not
+    /// answer. Microsoft's pattern is to ask once for ActualLength and again with a buffer that
+    /// size; a buffer already large enough is answered in one request, so the second is only sent
+    /// when the first was too small.
+    /// </summary>
+    public static unsafe PortConnectorProperties? GetPortConnectorProperties(SafeFileHandle hub, uint port)
+    {
+        int size = 512;
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            byte[] b = new byte[size];
+            BitConverter.TryWriteBytes(b.AsSpan(0), port);   // CompanionIndex stays 0, as SuperSpeed hubs require
+
+            fixed (byte* p = b)
+            {
+                if (!Win32.DeviceIoControl(hub, IoctlGetPortConnectorProperties,
+                                           p, (uint)b.Length, p, (uint)b.Length, out _, IntPtr.Zero))
+                    return null;
+            }
+
+            uint actual = BitConverter.ToUInt32(b, 4);
+            if (actual <= b.Length) return PortConnectorProperties.Decode(b.AsSpan(0, (int)actual));
+            size = (int)Math.Min(actual, 65536u);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The hub's report of the port's protocols and the device's SuperSpeed capability, or null
+    /// when the hub does not answer. A refusal leaves both unknown; it is never read as USB 2.
+    /// </summary>
+    public static unsafe ConnectionSpeedInfo? GetConnectionSpeedInfo(SafeFileHandle hub, uint port)
+    {
+        byte[] b = new byte[ConnectionSpeedInfo.Size];
+        BitConverter.TryWriteBytes(b.AsSpan(0), port);
+        BitConverter.TryWriteBytes(b.AsSpan(4), (uint)ConnectionSpeedInfo.Size);
+
+        // The caller names the protocols it understands, and Windows 8 fails the request unless
+        // Usb300 is among them. On return the same field holds what the port supports.
+        BitConverter.TryWriteBytes(b.AsSpan(8), 0x7u);
+
+        uint returned;
+        fixed (byte* p = b)
+        {
+            if (!Win32.DeviceIoControl(hub, IoctlGetNodeConnectionInformationExV2,
+                                       p, (uint)b.Length, p, (uint)b.Length, out returned, IntPtr.Zero))
+                return null;
+        }
+
+        return returned >= ConnectionSpeedInfo.Size ? ConnectionSpeedInfo.Decode(b) : null;
+    }
+
+    /// <summary>
+    /// The speed capabilities in the device's BOS descriptor, or null when there is none to read.
+    /// Only asked of devices declaring bcdUSB 2.01 or later, the first revision with a BOS.
+    /// </summary>
+    public static BosSpeedCapability? GetBosSpeedCapability(SafeFileHandle hub, uint port, ushort bcdUsb)
+    {
+        if (bcdUsb < 0x0201) return null;
+
+        // The 5-byte header first to learn the total length, then the whole descriptor.
+        byte[]? header = GetDescriptor(hub, port, DescriptorTypeBos, 0, 0, 5);
+        if (header is null || header.Length < 5 || header[1] != DescriptorTypeBos) return null;
+
+        ushort total = BitConverter.ToUInt16(header, 2);
+        if (total <= 5 || total > 4096) return null;
+
+        byte[]? bos = GetDescriptor(hub, port, DescriptorTypeBos, 0, 0, total);
+        return bos is null ? null : BosSpeedCapability.Parse(bos);
     }
 
     /// <summary>Issues a GET_DESCRIPTOR control request through the hub on the device's behalf.</summary>
