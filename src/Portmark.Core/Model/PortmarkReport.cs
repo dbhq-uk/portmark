@@ -40,6 +40,95 @@ public sealed class MachineReport
     /// that is not full and still is not gaining.
     /// </summary>
     public int? BatteryPercent { get; init; }
+
+    /// <summary>
+    /// Every battery device Windows lists, read through the battery class IOCTLs. Empty when
+    /// there is none, and <see cref="BatteriesNote"/> then says whether that is because Windows
+    /// lists none or because the list could not be read.
+    /// </summary>
+    public List<BatteryReport> Batteries { get; init; } = [];
+    public string? BatteriesNote { get; init; }
+}
+
+/// <summary>
+/// One battery as its own fuel gauge describes it, from BATTERY_INFORMATION and BATTERY_STATUS.
+///
+/// The rate is the battery's net charge flow, positive while it gains charge and negative while it
+/// loses it. It is not the power arriving through a USB-C cable: the machine's own load sits
+/// between the two, so a charger can be delivering 15W while the battery reports -8W.
+/// </summary>
+public sealed class BatteryReport
+{
+    public int Index { get; init; }
+
+    /// <summary>False when the battery device is a slot with no battery in it.</summary>
+    public bool Present { get; init; }
+
+    public string? DeviceName { get; init; }
+    public string? Manufacturer { get; init; }
+    public string? Chemistry { get; init; }
+
+    /// <summary>BATTERY_SYSTEM_BATTERY: the battery can run the system. Null when unread.</summary>
+    public bool? IsSystemBattery { get; init; }
+
+    /// <summary>BATTERY_IS_SHORT_TERM: a fail-safe battery such as a UPS. Null when unread.</summary>
+    public bool? IsShortTerm { get; init; }
+
+    /// <summary>
+    /// BATTERY_CAPACITY_RELATIVE: capacity and rate are in arbitrary units. Every milliwatt-hour
+    /// and milliwatt field is then null, because a relative 200 is not 200 mW.
+    /// </summary>
+    public bool CapacityRelative { get; init; }
+
+    /// <summary>The PowerState flags as the battery set them. Null when the status was not read.</summary>
+    public BatteryPowerStateReport? PowerState { get; init; }
+
+    public int? RemainingCapacityMilliwattHours { get; init; }
+    public int? FullChargeCapacityMilliwattHours { get; init; }
+    public int? DesignCapacityMilliwattHours { get; init; }
+
+    /// <summary>Signed: negative while discharging. Null when BATTERY_UNKNOWN_RATE or relative.</summary>
+    public int? RateMilliwatts { get; init; }
+    public int? VoltageMillivolts { get; init; }
+
+    /// <summary>Remaining over full-charge capacity. Valid for relative batteries too.</summary>
+    public int? ChargePercent { get; init; }
+
+    /// <summary>Full-charge capacity over design capacity, as a percentage.</summary>
+    public int? HealthPercent { get; init; }
+    public string? HealthNote { get; init; }
+
+    /// <summary>Null when the battery does not count cycles, which it reports as zero.</summary>
+    public int? CycleCount { get; init; }
+
+    /// <summary>What limits how the numbers above may be read.</summary>
+    public string? Note { get; init; }
+
+    /// <summary>Why something could not be read, when a query failed.</summary>
+    public string? Reason { get; init; }
+
+    public BatteryRawReport Raw { get; init; } = new();
+}
+
+public sealed class BatteryPowerStateReport
+{
+    public int Flags { get; init; }
+
+    /// <summary>BATTERY_POWER_ON_LINE: the system has access to external power.</summary>
+    public bool OnExternalPower { get; init; }
+    public bool Discharging { get; init; }
+    public bool Charging { get; init; }
+    public bool Critical { get; init; }
+}
+
+/// <summary>The structures exactly as returned, so the decoding can be redone.</summary>
+public sealed class BatteryRawReport
+{
+    public string? InformationHex { get; init; }
+    public string? StatusHex { get; init; }
+
+    /// <summary>The battery tag the readings were taken under. Windows changes it when the battery does.</summary>
+    public uint? Tag { get; set; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

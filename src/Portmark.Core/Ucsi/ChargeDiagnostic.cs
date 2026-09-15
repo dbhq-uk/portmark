@@ -1,3 +1,5 @@
+using Portmark.Core.Power;
+
 namespace Portmark.Core.Ucsi;
 
 /// <summary>
@@ -66,8 +68,13 @@ public static class ChargeDiagnostic
     /// </summary>
     public const int NearlyFullPercent = 90;
 
+    /// <param name="battery">
+    /// The batteries' own readings, or null when no battery device answered, in which case only the
+    /// percentage from GetSystemPowerStatus is available and the wording is as it was without them.
+    /// </param>
     public static string? Explain(int? negotiatedMilliwatts, int? offeredMilliwatts, bool consuming,
-                                  int? batteryChargingStatus, int? batteryPercent = null)
+                                  int? batteryChargingStatus, int? batteryPercent = null,
+                                  BatteryFlow? battery = null)
     {
         if (!IsUnderNegotiated(negotiatedMilliwatts, offeredMilliwatts, consuming)) return null;
 
@@ -83,27 +90,60 @@ public static class ChargeDiagnostic
             _ => "The controller did not report a charging rate.",
         };
 
+        string flow = battery is null ? "" : Flow(battery) + " ";
+        bool drainMeasured = battery?.RateMilliwatts < 0;
+
         // The battery percentage can take one explanation away, never grant one. Below the
         // threshold a full battery cannot be the reason. Above it, a full battery might be, but a
         // machine at 97 percent under load can still be draining on a bad contract, so that is
         // offered as a possibility and not as a verdict.
-        string battery = batteryPercent switch
+        string percentage = batteryPercent switch
         {
             null => "Whether the battery is nearly full could not be read. A battery with little left to take "
                   + "on draws little and that is correct, so a low contract is not on its own a fault.",
             >= NearlyFullPercent => $"The battery is at {batteryPercent} percent, which could explain a low "
                   + "contract: a battery with little left to take on draws little. It does not rule out a fault.",
             _ => $"The battery is at {batteryPercent} percent, so a full battery does not explain this, though a "
-               + "charge limit could. Check the cable and which port the supply is in, and be aware that "
-               + "Windows can report this as charging while the battery falls.",
+               + "charge limit could. Check the cable and which port the supply is in"
+               + (drainMeasured
+                   ? "."
+                   : ", and be aware that Windows can report this as charging while the battery falls."),
         };
 
         // An offer is not delivery. A supply whose higher rail fails leaves exactly this contract
         // behind, so the supply is never cleared.
         return $"A {Watts(taken)} contract is in force, but this supply offers up to {Watts(offered)}. "
-             + $"{controller} {battery} Why the contract is lower, and whether the supply can deliver what "
+             + $"{controller} {flow}{percentage} Why the contract is lower, and whether the supply can deliver what "
              + "it advertises, cannot be read from here.";
     }
+
+    /// <summary>
+    /// The battery's measured charge flow. It is the machine's load and the supply's delivery
+    /// netted together inside the battery, so it is never presented as what the charger or cable
+    /// carries: 15W can arrive while the battery reports -8W.
+    ///
+    /// A zero is not trusted. Microsoft notes some batteries report only discharging rates, and
+    /// this machine's WMI charge rate read zero while the battery fell.
+    /// </summary>
+    private static string Flow(BatteryFlow battery) => battery.RateMilliwatts switch
+    {
+        int drain and < 0 when battery.OnExternalPower =>
+            $"The battery measures a net drain of {Watts(-drain)} while on external power: it is losing charge "
+          + "despite the charger. Windows' charging indicator is not evidence either way. That figure is the "
+          + "battery's own charge flow, not the power arriving through the cable.",
+        int drain and < 0 =>
+            $"The battery measures a net drain of {Watts(-drain)} and does not report external power. That figure "
+          + "is the battery's own charge flow, not the power arriving through the cable.",
+        int gain and > 0 =>
+            $"The battery measures a net charge of {Watts(gain)}. That is the battery's own charge flow, not the "
+          + "power arriving through the cable, so it does not show how much the supply is delivering.",
+        0 => "The battery reports a rate of zero. Some batteries report only discharging rates, so this is not "
+           + "taken as evidence that the charge is holding.",
+        _ when battery.Discharging =>
+            "The battery reports it is discharging but did not report a rate, so the drain could not be measured.",
+        _ => "The battery did not report its charge rate in watts, so whether it is gaining or losing charge "
+           + "could not be measured.",
+    };
 
     private static string Watts(int milliwatts) => $"{milliwatts / 1000.0:0.#}W";
 }

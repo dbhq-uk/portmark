@@ -24,10 +24,15 @@ public static class PortmarkReader
         if (connection is null || report.Capability.Status != CapabilityStatus.Ok)
             return report;
 
+        // The batteries' own percentage and rate when a battery device answered; otherwise the
+        // percentage from GetSystemPowerStatus, as before.
+        Power.BatteryFlow? batteryFlow = Power.BatteryTelemetry.Summarise(report.Machine.Batteries);
+        int? batteryPercent = batteryFlow?.ChargePercent ?? report.Machine.BatteryPercent;
+
         int connectors = report.Capability.ConnectorCount ?? 0;
         for (byte index = 1; index <= connectors; index++)
             report.Connectors.Add(ReadConnector(connection, index, report.Capability.Features,
-                                                report.Machine.BatteryPercent));
+                                                batteryPercent, batteryFlow));
 
         return report;
     }
@@ -116,7 +121,8 @@ public static class PortmarkReader
     }
 
     private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
-                                                PpmFeatureReport? features, int? batteryPercent = null)
+                                                PpmFeatureReport? features, int? batteryPercent = null,
+                                                Power.BatteryFlow? batteryFlow = null)
     {
         bool cableDetailsAvailable = features?.CableDetailsAvailable ?? true;
         bool pdoDetailsAvailable = features?.PowerDataObjectDetailsAvailable ?? false;
@@ -187,7 +193,7 @@ public static class PortmarkReader
             report.Power.Negotiated?.NegotiatedPowerMilliwatts, report.Power.MaxAvailableMilliwatts, consuming);
         report.Power.PowerDiagnosis = ChargeDiagnostic.Explain(
             report.Power.Negotiated?.NegotiatedPowerMilliwatts, report.Power.MaxAvailableMilliwatts, consuming,
-            report.BatteryChargingStatusCode, batteryPercent);
+            report.BatteryChargingStatusCode, batteryPercent, batteryFlow);
 
         report.Summary = Summarise(report);
         return report;
@@ -410,6 +416,9 @@ public static class PortmarkReader
         using RegistryKey? bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
         using RegistryKey? cv = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
 
+        // Read-only battery class queries. No wait: a slot with no battery answers at once.
+        List<BatteryReport> batteries = Power.BatteryTelemetry.ReadAll(out string? batteriesNote);
+
         return new MachineReport
         {
             Manufacturer = bios?.GetValue("SystemManufacturer")?.ToString(),
@@ -419,6 +428,8 @@ public static class PortmarkReader
                       + $"{cv?.GetValue("CurrentBuild")}.{cv?.GetValue("UBR")}",
             OsDisplayVersion = cv?.GetValue("DisplayVersion")?.ToString(),
             BatteryPercent = Native.PowerStatus.BatteryPercent(),
+            Batteries = batteries,
+            BatteriesNote = batteriesNote,
         };
     }
 }
