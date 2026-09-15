@@ -260,7 +260,7 @@ internal static class Program
                 if (power.PowerDiagnosis is not null)
                 {
                     Console.WriteLine();
-                    Console.WriteLine("  ** DRAWING LESS THAN THIS SUPPLY OFFERS **");
+                    Console.WriteLine("  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **");
                     Console.WriteLine($"  {Wrap(power.PowerDiagnosis, 72).Replace(Environment.NewLine, Environment.NewLine + "  ")}");
                 }
             }
@@ -281,7 +281,7 @@ internal static class Program
 
             if (cable.Inferred is { } inferred)
             {
-                Console.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.#}A, deduced not reported");
+                Console.WriteLine($"  Cable rating at least {inferred.MinimumCurrentRatingMilliamps / 1000.0:0.##}A, deduced not reported");
                 string deduction = $"{inferred.Evidence} {inferred.Basis} {inferred.Conclusion}";
                 Console.WriteLine($"               {Wrap(deduction, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
             }

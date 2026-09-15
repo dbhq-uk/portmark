@@ -468,18 +468,45 @@ public class AlternateModeInterpretationTests
     }
 
     [Fact]
-    public void StatusFlagIsCorroborationNotVeto()
+    public void ClearStatusFlagDoesNotVetoTheIndex()
     {
         // Index and the device's list agree; the connector status partner flag is clear. This
         // controller leaves that flag clear even with DisplayPort entered (captured with the
-        // 0x343C adapter), so a clear flag cannot be allowed to veto the two signals that agree.
-        (string note, PortAlternateModeReport? active, _) = AlternateModes.Interpret(
+        // 0x343C adapter), so a clear flag cannot veto the name. It cannot confirm it either.
+        (string note, PortAlternateModeReport? active, bool confirmed) = AlternateModes.Interpret(
             ThinkPadPort1(), Listed(complete: true, "01FF45000C00"), connected: true, currentCam: 2,
             partnerAlternateModeFlag: false);
 
         Assert.NotNull(active);
         Assert.True(active.IsDisplayPort);
-        Assert.Contains("and the device offers it", note);
+        Assert.False(confirmed);
+        Assert.Contains("The device offers it, but offering a mode is not the same as having entered it", note);
+        Assert.Contains("says no alternate mode is in operation", note);
+    }
+
+    [Fact]
+    public void IncompletePartnerListDoesNotVetoTheIndex()
+    {
+        // The partner's list stopped after the Lenovo mode. DisplayPort may be in the part that was
+        // never read, so its absence is not evidence against the controller's index.
+        (string note, PortAlternateModeReport? active, bool confirmed) = AlternateModes.Interpret(
+            ThinkPadPort1(), Listed(complete: false, "EF1701000000"), connected: true, currentCam: 2);
+
+        Assert.NotNull(active);
+        Assert.True(active.IsDisplayPort);
+        Assert.False(confirmed);
+        Assert.Contains("incomplete", note);
+    }
+
+    [Fact]
+    public void CaveatDoesNotClaimAFlagThatWasNotRead()
+    {
+        (string note, _, _) =
+            AlternateModes.Interpret(ThinkPadPort1(), NoData, connected: true, currentCam: 2, partnerAlternateModeFlag: null);
+
+        Assert.DoesNotContain("says no alternate mode", note);
+        Assert.DoesNotContain("does not list a partner's modes", note);
+        Assert.Contains("did not say whether one is in operation", note);
     }
 
     [Fact]
@@ -559,6 +586,29 @@ public class CableInferenceTests
 
         Assert.Equal(3250, inferred.MinimumCurrentRatingMilliamps);
         Assert.Contains("captive", inferred.Conclusion);
+        // The bound is 3.25A. Rounding it to 3.3A would claim more than the supply said.
+        Assert.Contains("at least 3.25A", inferred.Conclusion);
+    }
+
+    [Fact]
+    public void ProgrammableSupplyAboveThreeAmpsCounts()
+    {
+        // PPS, subtype 00: 3.3-21V at 5A.
+        CableInferenceReport inferred = Assert.IsType<CableInferenceReport>(
+            CableInference.FromPower(Supply("2C91110A6421A4C1")));
+
+        Assert.Equal(5000, inferred.MinimumCurrentRatingMilliamps);
+    }
+
+    [Fact]
+    public void ReservedAugmentedSubtypeIsNotEvidence()
+    {
+        // Augmented object, subtype 11 (reserved). Its low bits would read as 5A if decoded with
+        // the PPS layout, which would invent a cable rating out of a field that means something else.
+        PowerObjectReport pdo = Assert.Single(PowerDataObject.DecodeAll(Convert.FromHexString("6421DCF0")));
+        Assert.Equal("unrecognised", pdo.Kind);
+
+        Assert.Null(CableInference.FromPower(Supply("2C91110A6421DCF0")));
     }
 
     [Fact]
@@ -600,15 +650,63 @@ public class CableInferenceTests
         Assert.Contains("word of the supply rather than of the cable", inferred.Conclusion);
     }
 
+    private static ConnectorReport Port(bool? connected, string? direction, PowerReport power,
+                                        bool cableSpoke = false) => new()
+    {
+        Index = 1,
+        Connected = connected,
+        PowerDirection = direction,
+        Power = power,
+        Cable = cableSpoke
+            ? CableProperty.Decode(Convert.FromHexString("2C81641A02"))
+            : new CableReport { DataAvailable = false },
+    };
+
+    [Fact]
+    public void ADrawingPortWithASilentCableGetsTheDeduction()
+    {
+        Assert.NotNull(CableInference.FromConnector(
+            Port(true, "consuming", Supply("2C91110A2CD112002CB11400F4411600"))));
+    }
+
     [Fact]
     public void ACableThatSpokeForItselfIsNotSecondGuessed()
     {
         // The deduction is a fallback. When GET_CABLE_PROPERTY answered, the cable's own words
-        // stand alone, and PortmarkReader attaches nothing beside them.
-        CableReport spoke = CableProperty.Decode(Convert.FromHexString("2C81641A02"));
+        // stand alone.
+        Assert.Null(CableInference.FromConnector(
+            Port(true, "consuming", Supply("2C91110A2CD112002CB11400F4411600"), cableSpoke: true)));
+    }
 
-        Assert.True(spoke.DataAvailable);
-        Assert.Null(spoke.Inferred);
+    [Fact]
+    public void NothingIsDeducedAboutACableThatIsNotThere()
+    {
+        Assert.Null(CableInference.FromConnector(Port(false, null, Supply("2C91110A2CD112002CB11400F4411600"))));
+        Assert.Null(CableInference.FromConnector(Port(null, null, Supply("2C91110A2CD112002CB11400F4411600"))));
+    }
+
+    [Fact]
+    public void NothingIsDeducedWhileThisPcIsTheSupply()
+    {
+        // When this PC supplies, the attached device never read the cable, so its objects prove
+        // nothing about it.
+        Assert.Null(CableInference.FromConnector(
+            Port(true, "supplying", Supply("2C91110A2CD112002CB11400F4411600"))));
+    }
+
+    [Fact]
+    public void ThisPcsOwnObjectsAreNeverEvidence()
+    {
+        // The local list is what this PC can supply, not what it advertised over this cable, so a
+        // 5A entry in it says nothing about the cable attached.
+        var power = new PowerReport
+        {
+            DataAvailable = true,
+            LocalSource = PowerDataObject.DecodeAll(Convert.FromHexString("F4411600")),
+        };
+
+        Assert.Null(CableInference.FromPower(power));
+        Assert.Null(CableInference.FromConnector(Port(true, "consuming", power)));
     }
 }
 
@@ -630,13 +728,28 @@ public class ChargeDiagnosticTests
     }
 
     [Fact]
-    public void SupplyingPortReportsNotCharging()
+    public void SupplyingPortLeavesTheChargingStatusUnset()
     {
-        // Connector 2, supplying power to a DisplayPort adapter. The ninth byte is 0x00.
+        // Connector 2, supplying power to a DisplayPort adapter. The ninth byte is 0x00, but UCSI
+        // defines the field only while the connector is a sink, so it is not decoded at all.
         var report = new ConnectorReport { Index = 2 };
         ConnectorStatus.Apply(Convert.FromHexString("00003B402CB1041300"), report);
 
-        Assert.Equal(ChargeDiagnostic.NotCharging, report.BatteryChargingStatusCode);
+        Assert.Equal("supplying", report.PowerDirection);
+        Assert.Null(report.BatteryChargingStatusCode);
+        Assert.Null(report.BatteryChargingStatus);
+    }
+
+    [Theory]
+    [InlineData("02", ChargeDiagnostic.Slow)]
+    [InlineData("03", ChargeDiagnostic.VerySlow)]
+    [InlineData("FE", ChargeDiagnostic.Slow)]
+    public void OnlyBits64And65AreRead(string ninth, int expected)
+    {
+        var report = new ConnectorReport { Index = 1 };
+        ConnectorStatus.Apply(Convert.FromHexString("00002B202CB10413" + ninth), report);
+
+        Assert.Equal(expected, report.BatteryChargingStatusCode);
     }
 
     [Fact]
@@ -732,12 +845,29 @@ public class ChargeDiagnosticBatteryTests
         ChargeDiagnostic.Explain(15_000, 100_000, consuming: true, ChargeDiagnostic.Nominal, batteryPercent));
 
     [Fact]
-    public void ANearlyFullBatteryExplainsTheSmallContract()
+    public void ANearlyFullBatteryIsOfferedAsAnExplanation_NotAVerdict()
     {
+        // A laptop at 97 percent under heavy load can still be draining on a bad contract, so a
+        // high charge may explain a small contract but never clears it.
         string diagnosis = Explain(97);
 
         Assert.Contains("97 percent", diagnosis);
-        Assert.Contains("expected", diagnosis);
+        Assert.Contains("could explain", diagnosis);
+        Assert.Contains("does not rule out a fault", diagnosis);
+        Assert.DoesNotContain("expected", diagnosis);
+    }
+
+    [Fact]
+    public void TheSupplyIsNeverCleared()
+    {
+        // Advertising power is not delivering it. A supply whose higher rail fails leaves exactly
+        // this 5V contract behind.
+        foreach (int? percent in new int?[] { null, 43, 97 })
+        {
+            string diagnosis = Explain(percent);
+            Assert.DoesNotContain("rules out is the supply", diagnosis);
+            Assert.Contains("whether the supply can deliver what it advertises", diagnosis);
+        }
     }
 
     [Fact]
@@ -767,7 +897,7 @@ public class ChargeDiagnosticBatteryTests
         // so neither is asserted.
         string diagnosis = Explain(null);
 
-        Assert.Contains("already full draws little", diagnosis);
+        Assert.Contains("could not be read", diagnosis);
         Assert.DoesNotContain("percent", diagnosis);
     }
 
@@ -811,8 +941,10 @@ public class ActiveAlternateModeConfirmationTests
     }
 
     [Fact]
-    public void ThePartnerListingTheModeIsConfirmation()
+    public void ThePartnerListingTheModeIsNotConfirmation()
     {
+        // A dock that can enter DisplayPort lists it whether or not it has. Only the status flag
+        // speaks to operation.
         (_, PortAlternateModeReport? active, bool confirmed) = AlternateModes.Interpret(
             Port2(),
             new AlternateModeListReport
@@ -823,7 +955,25 @@ public class ActiveAlternateModeConfirmationTests
             connected: true, currentCam: 1, partnerAlternateModeFlag: false);
 
         Assert.NotNull(active);
-        Assert.True(confirmed);
+        Assert.False(confirmed);
+    }
+
+    [Fact]
+    public void IndexZeroIsNotNamedBecauseThePartnerOffersThatMode()
+    {
+        // An idle device that lists Lenovo's mode, with index 0: this controller also reports 0
+        // when no mode is in use, and offering a mode is not using it.
+        (_, PortAlternateModeReport? active, bool confirmed) = AlternateModes.Interpret(
+            Port2(),
+            new AlternateModeListReport
+            {
+                DataAvailable = true, Complete = true,
+                Modes = AlternateModes.Decode(Convert.FromHexString("EF1701000000")),
+            },
+            connected: true, currentCam: 0, partnerAlternateModeFlag: false);
+
+        Assert.Null(active);
+        Assert.False(confirmed);
     }
 
     [Fact]

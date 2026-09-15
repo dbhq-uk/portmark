@@ -6,7 +6,7 @@
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4.svg)](#install)
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
-[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](#building)
+[![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen.svg)](#building)
 
 **Find out what your USB-C ports, chargers and adapters can actually do - and get told
 "unknown" when your PC genuinely cannot tell you.**
@@ -73,14 +73,15 @@ Port 1
   Supply offers
     - 20V at 5A (100W)
 
-  ** DRAWING LESS THAN THIS SUPPLY OFFERS **
+  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **
   A 15W contract is in force, but this supply offers up to 100W. The controller
   nonetheless reports a nominal charging rate, so its firmware is not treating this
   as a shortfall. The battery is at 43 percent, so a full battery does not explain
-  this.
+  this, though a charge limit could.
 ```
 
-That is a real reading from the machine portmark was developed on, and it matters because
+That is a real reading from the machine portmark was developed on, cut to the relevant lines: the
+full output lists all four supply offers and goes on to what the reading cannot tell. It matters because
 everything else on that machine said the opposite. Windows reported the battery as charging while
 it fell from 46 percent to 43 percent. The port controller reported a nominal charging rate
 throughout. The battery charge is read for one reason: a nearly full battery draws very little and
@@ -88,7 +89,7 @@ that is correct, so without it the honest answer would have to include an excuse
 apply.
 
 portmark names no cause. It reports the gap, what the controller thinks of it, and what the
-evidence rules out.
+evidence cannot tell. A supply advertising 100W is not proof that it can deliver 100W.
 
 ## Why you cannot just look at the connector
 
@@ -218,7 +219,8 @@ Verified on a Lenovo ThinkPad T16 Gen 2 (AMD, type 21K7, BIOS R2FET70W) running 
 On that machine the power delivery decoding was checked against physical reality: the attached
 supply decodes to 5V/3A, 9V/3A, 15V/3A and 20V/3.25A, exactly the profile printed on the 65W
 charger. The alternate mode list was checked against the machine too: the USB4 port lists
-Thunderbolt 3 and DisplayPort, the USB 3.2 port lists DisplayPort only, matching the spec sheet.
+Lenovo's vendor mode, Thunderbolt 3 and DisplayPort, and the USB 3.2 port lists Lenovo's vendor
+mode and DisplayPort, matching the spec sheet.
 That controller does not report cable details: it answers `GET_CABLE_PROPERTY` with UCSI's
 Not Supported indicator, exactly as it answers an undefined command.
 

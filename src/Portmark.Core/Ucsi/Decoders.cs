@@ -238,8 +238,9 @@ public static class ConnectorStatus
 
         // Bits 64-65, the ninth byte, present from UCSI 1.0. This was read off the wire and
         // discarded until it turned out to be the field Windows drives its own slow-charging
-        // notification from.
-        if (data.Length >= 9)
+        // notification from. UCSI defines it only while the connector is a sink, so a port supplying
+        // power leaves it unset rather than reporting whatever the byte happens to hold.
+        if (data.Length >= 9 && !Bit(data, 20))
         {
             int charging = (int)Bits(data, 64, 2);
             report.BatteryChargingStatusCode = charging;
@@ -483,19 +484,22 @@ public static class AlternateModes
             return ($"{canEnter} {partnerText} The controller's current-mode index {currentCam} does not match "
                   + "a listed port mode, so which mode is in use is unknown.", null, false);
 
+        // A complete partner list that lacks the mode contradicts the index. An incomplete one does
+        // not: the mode may be in the part that was never read.
         bool deviceListsIt = partnerListed && partner!.Modes.Any(p => p.Svid == candidate.Svid);
-        if (deviceListsIt || partnerAlternateModeFlag == true)
-            return ($"{canEnter} {partnerText} The controller reports {candidate.Name} as the current mode"
-                  + (deviceListsIt ? ", and the device offers it." : ", and the connector status confirms an alternate mode is in operation."),
-                    candidate, true);
-
-        if (partnerListed)
+        if (partnerListed && partner!.Complete && !deviceListsIt)
             return ($"{canEnter} {partnerText} The controller's current-mode index points at {candidate.Name}, "
                   + "which the device did not list, so which mode is in use could not be confirmed.", null, false);
 
-        // No word from the partner, which is this controller's normal state: it never lists a
-        // partner's modes and never sets the alternate mode flag. Index 0 is ambiguous, being also
-        // what it reports for an empty port, against the specification's 0xFF.
+        // Only the status flag speaks to operation. A device that lists a mode can enter it, which
+        // is not the same as having entered it, so the list never confirms on its own.
+        if (partnerAlternateModeFlag == true)
+            return ($"{canEnter} {partnerText} The controller reports {candidate.Name} as the current mode, and the "
+                  + "connector status says an alternate mode is in operation." + (deviceListsIt ? " The device offers it." : ""),
+                    candidate, true);
+
+        // Index 0 is ambiguous, being also what this controller reports when no mode is in use,
+        // against the specification's 0xFF.
         //
         // A non-zero index is the controller's own statement and is passed on as exactly that,
         // unconfirmed. It is worth passing on and worth marking: a DisplayPort adapter on
@@ -506,9 +510,21 @@ public static class AlternateModes
         if (currentCam == 0)
             return ($"{canEnter} {partnerText} The controller's current-mode index is 0, which it also reports "
                   + "for an empty port, so no mode is confirmed in use.", null, false);
+
+        // The caveat says only what the inputs say. It is built from them rather than from what
+        // this controller usually does.
+        string device = deviceListsIt
+            ? "The device offers it, but offering a mode is not the same as having entered it."
+            : partner is null || !partner.DataAvailable
+                ? "The attached device's modes could not be read."
+                : partner.Modes.Count == 0
+                    ? "The attached device listed no modes."
+                    : "The attached device's list is incomplete and does not include it.";
+        string flag = partnerAlternateModeFlag is null
+            ? "The connector status did not say whether one is in operation."
+            : "The connector status says no alternate mode is in operation.";
         return ($"{canEnter} {partnerText} The controller reports {candidate.Name} as the current mode. "
-              + "Nothing here corroborates it: this controller does not list a partner's modes, and its "
-              + "status flag says no alternate mode is in operation.", candidate, false);
+              + $"Nothing here corroborates it. {device} {flag}", candidate, false);
     }
 
     private static string Names(IEnumerable<PortAlternateModeReport> modes)
@@ -531,11 +547,26 @@ public static class AlternateModes
 /// Two things it deliberately does not conclude. A captive cable is the standing exception, and
 /// captive is indistinguishable from marked from this end, so both are stated. And current says
 /// nothing about data speed: a 100W cable can be USB 2.0.
+///
+/// Only the attached supply's advertisement counts, and only while this PC is drawing from it.
+/// This PC's own list is what it can supply, not what it advertised over this cable, and when this
+/// PC is the source the attached device never had to read the cable at all.
 /// </summary>
 public static class CableInference
 {
     /// <summary>What any USB-C cable may carry without declaring itself, in milliamps.</summary>
     public const int UnmarkedCableLimitMilliamps = 3000;
+
+    /// <summary>
+    /// The deduction for a connector, or null when it does not apply: the cable spoke for itself,
+    /// nothing is attached, or this PC is not the one drawing power.
+    /// </summary>
+    public static CableInferenceReport? FromConnector(ConnectorReport report)
+    {
+        if (report.Cable.DataAvailable) return null;
+        if (report.Connected != true || report.PowerDirection != "consuming") return null;
+        return FromPower(report.Power);
+    }
 
     public static CableInferenceReport? FromPower(PowerReport power)
     {
@@ -543,29 +574,29 @@ public static class CableInference
 
         // Only objects that decoded. An unrecognised object might hold anything, and guessing a
         // current out of one would be inventing the evidence for the conclusion.
-        PowerObjectReport? highest = power.PartnerSource.Concat(power.LocalSource)
+        PowerObjectReport? highest = power.PartnerSource
             .Where(p => p.Kind != "unrecognised" && p.MaxCurrentMilliamps is not null)
             .MaxBy(p => p.MaxCurrentMilliamps);
 
         if (highest?.MaxCurrentMilliamps is not int current || current <= UnmarkedCableLimitMilliamps)
             return null;
 
-        string who = power.PartnerSource.Contains(highest) ? "The attached supply" : "This PC";
-
         return new CableInferenceReport
         {
             MinimumCurrentRatingMilliamps = current,
-            Evidence = $"{who} advertises {highest.Display}.",
+            Evidence = $"The attached supply advertises {highest.Display}.",
             Basis = $"A USB-C cable may carry {Amps(UnmarkedCableLimitMilliamps)} without declaring anything about "
                   + "itself. Above that it has to be electronically marked, and a supply has to read that marking "
                   + "over the cable before offering more. The one exception is a captive cable, which its supply "
                   + "knows by construction.",
-            Conclusion = $"So the cable in use carries at least {Amps(current)}, on the word of the supply rather "
+            Conclusion = $"So, if the supply follows USB Power Delivery, the cable in use is rated for at least "
+                       + $"{Amps(current)}, on the word of the supply rather "
                        + "than of the cable. Whether it is captive or electronically marked cannot be told apart "
                        + "from this PC. This says nothing about its data speed: a cable can carry full power at "
                        + "USB 2.0 speed.",
         };
     }
 
-    private static string Amps(int milliamps) => $"{milliamps / 1000.0:0.#}A";
+    // Two places, so 3.25A is never rounded up into a rating the supply did not state.
+    private static string Amps(int milliamps) => $"{milliamps / 1000.0:0.##}A";
 }

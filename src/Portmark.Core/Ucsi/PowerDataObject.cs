@@ -109,6 +109,12 @@ public static class PowerDataObject
 
     private static PowerObjectReport Augmented(uint raw)
     {
+        // Bits 28-29 pick the augmented subtype. Only 00, SPR PPS, has the layout below. The
+        // others (AVS, reserved) put different fields in the same bits, and decoding them as PPS
+        // invents currents, which the cable deduction would then take as evidence.
+        if (((raw >> 28) & 0x3) != 0)
+            return Unrecognised(raw);
+
         int currentMa = (int)(raw & 0x7F) * 50;
         int minMv = (int)((raw >> 8) & 0xFF) * 100;
         int maxMv = (int)((raw >> 17) & 0xFF) * 100;

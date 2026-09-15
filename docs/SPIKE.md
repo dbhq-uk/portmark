@@ -237,12 +237,15 @@ about a bare charger on the strength of that 0.
 
 A second capture settles how far the index can be trusted. With a USB-C DisplayPort adapter on
 connector 2 (Billboard `0x343C`, which reports DisplayPort Alternate Mode "entered successfully"),
-`GET_CURRENT_CAM` returns `1`, and offset 1 in that port's list is DisplayPort. So the index is
-right when it is non-zero. Meanwhile the partner list (recipient SOP) stays empty and the partner
+`GET_CURRENT_CAM` returns `1`, and offset 1 in that port's list is DisplayPort. So the index was
+right that time. The iPhone capture further down gives the same `1` with no display attached, so a
+non-zero index is not proof on its own. Meanwhile the partner list (recipient SOP) stays empty and the partner
 flags in `GET_CONNECTOR_STATUS` stay `0x01` (alternate mode bit clear), exactly as with the charger:
 this controller never describes the partner's modes, so neither of those can be used to veto its
 index. portmark therefore names a non-zero index as the controller's own statement, says so, and
-treats index 0 as unconfirmed unless the partner's list corroborates it. Recipient SOP' (the cable)
+treats index 0 as unconfirmed. A mode counts as confirmed only when the connector status says an
+alternate mode is in operation. A partner that lists a mode can enter it, which is not the same as
+having entered it. Recipient SOP' (the cable)
 also returns zero length on both ports, with the charger and with the adapter; neither is a known
 e-marked cable, so that is not yet evidence either way about cable modes.
 

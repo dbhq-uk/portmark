@@ -180,8 +180,7 @@ public static class PortmarkReader
 
         // Only when the cable could not speak for itself. If it did, its own words stand, and a
         // deduction alongside them would be noise at best and a contradiction at worst.
-        if (!report.Cable.DataAvailable)
-            report.Cable.Inferred = CableInference.FromPower(report.Power);
+        report.Cable.Inferred = CableInference.FromConnector(report);
 
         bool consuming = report.PowerDirection == "consuming";
         report.Power.IsUnderNegotiated = ChargeDiagnostic.IsUnderNegotiated(
@@ -312,8 +311,8 @@ public static class PortmarkReader
             ? "This port controller does not implement the cable query, so no cable can be identified."
             : report.Connected == false
                 ? "Nothing is attached to this port."
-                : "The cable carries no e-marker, so it cannot describe itself. Cables rated at or "
-                + "below 3A are not required to have one.";
+                : "The cable did not describe itself, which usually means it carries no e-marker. "
+                + "Cables rated at or below 3A are not required to have one.";
 
         return CableProperty.Decode([], reason);
     }
@@ -345,8 +344,8 @@ public static class PortmarkReader
         CableReport cable = report.Cable;
         if (!cable.DataAvailable)
             return cable.Inferred?.MinimumCurrentRatingMilliamps is int rating
-                ? $"{attached}. Cable: not reported by this PC, but it carries at least "
-                + $"{rating / 1000.0:0.#}A for the supply to be offering that."
+                ? $"{attached}. Cable: not reported by this PC, but the supply's offer means it is rated "
+                + $"for at least {rating / 1000.0:0.##}A, if the supply follows USB Power Delivery."
                 : $"{attached}. Cable: not reported by this PC.";
 
         var cableParts = new List<string>();

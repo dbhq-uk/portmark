@@ -83,23 +83,26 @@ public static class ChargeDiagnostic
             _ => "The controller did not report a charging rate.",
         };
 
-        // The battery percentage is what separates the two explanations. Above the threshold a
-        // small contract is correct behaviour and portmark says so. Below it, that excuse is gone,
-        // and saying nothing would leave the user reassured about a machine that is running down.
+        // The battery percentage can take one explanation away, never grant one. Below the
+        // threshold a full battery cannot be the reason. Above it, a full battery might be, but a
+        // machine at 97 percent under load can still be draining on a bad contract, so that is
+        // offered as a possibility and not as a verdict.
         string battery = batteryPercent switch
         {
-            null => "A battery that is already full draws little and that is correct, so a low contract "
-                  + "is not on its own a fault.",
-            >= NearlyFullPercent => $"The battery is at {batteryPercent} percent, so there is little left "
-                  + "to take on and a low contract is expected.",
-            _ => $"The battery is at {batteryPercent} percent, so a full battery does not explain this. "
-               + "Check the cable and which port the supply is in, and be aware that Windows can report "
-               + "this as charging while the battery falls.",
+            null => "Whether the battery is nearly full could not be read. A battery with little left to take "
+                  + "on draws little and that is correct, so a low contract is not on its own a fault.",
+            >= NearlyFullPercent => $"The battery is at {batteryPercent} percent, which could explain a low "
+                  + "contract: a battery with little left to take on draws little. It does not rule out a fault.",
+            _ => $"The battery is at {batteryPercent} percent, so a full battery does not explain this, though a "
+               + "charge limit could. Check the cable and which port the supply is in, and be aware that "
+               + "Windows can report this as charging while the battery falls.",
         };
 
+        // An offer is not delivery. A supply whose higher rail fails leaves exactly this contract
+        // behind, so the supply is never cleared.
         return $"A {Watts(taken)} contract is in force, but this supply offers up to {Watts(offered)}. "
-             + $"{controller} {battery} What it rules out is the supply: it has the power and is "
-             + "offering it.";
+             + $"{controller} {battery} Why the contract is lower, and whether the supply can deliver what "
+             + "it advertises, cannot be read from here.";
     }
 
     private static string Watts(int milliwatts) => $"{milliwatts / 1000.0:0.#}W";
