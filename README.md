@@ -50,22 +50,27 @@ That reading is from the machine portmark was developed on, cut to the relevant 
 ## Why is my USB-C device running slowly?
 
 The question behind most USB-C frustration is not "what is this cable" but "why is this slow".
-portmark compares what each device declares it can do against the link it actually negotiated:
+portmark compares what the hub reports a device is capable of against the link it actually
+negotiated, and says what the hub reports about the port and its connector. For example, a USB 3
+drive on a USB 2.0 cable reads along these lines:
 
 ```
-Samsung Portable SSD T7
+Portable SSD
   Speed        High, 480 Mbps
-  USB version  3.2
 
   ** RUNNING SLOWER THAN IT COULD **
-  Running at 480 Mbps, but this device declares USB 3.2, which allows 5 Gbps or
-  above. The usual cause is a USB 2.0 cable, or a USB 2.0 hub between this device
-  and the PC. The device and the port are probably both fine.
+  Running at 480 Mbps, but the hub reports this device is SuperSpeed capable,
+  which is 5 Gbps or above. The hub reports this port number supports USB 1.1
+  and USB 2.0, and that its connector is shared with companion port 2, which
+  supports USB 3. Something between the device and the connector, such as a
+  cable or adapter without USB 3 support, would produce this, but nothing read
+  here identifies what is limiting it.
 ```
 
-Both halves of that comparison come from the hardware - `bcdUSB` from the device's own descriptor
-and the negotiated speed from the hub - so it is a measurement, not a guess. Windows knows this and
-never tells you.
+Every part of that comes from the hardware: the hub's capability flags for the device (or the
+device's own BOS descriptor), the negotiated speed, and the port's supported protocols and
+companion port. A device's declared USB version is not used, because a USB 2.0 mouse running at
+12 Mbps is working exactly as designed. Windows knows all of this and never tells you.
 
 ## Why is my laptop charging slowly over USB-C?
 

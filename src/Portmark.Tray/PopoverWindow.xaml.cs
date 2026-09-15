@@ -299,8 +299,8 @@ public partial class PopoverWindow : Window
 
         Items.Children.Add(Card(Row("IconChip", list, "TextMuted"),
             "Everything attached over USB, with the link speed each device actually negotiated. "
-          + "Amber means it came up slower than the device itself says it can go, which usually "
-          + "points at a cable or hub in between."));
+          + "Amber means the hub reports the device can go faster than the link it came up on. "
+          + "Run portmark usb for what the hub reports about the port and its connector."));
     }
 
     /// <summary>
@@ -369,7 +369,8 @@ public partial class PopoverWindow : Window
         stack.Children.Add(grid);
         TextBlock why = Styled(new TextBlock
         {
-            Text = d.ExpectedSpeed is { } could ? $"Could do {could} - check the cable or hub" : "Below its rated speed",
+            // The hub's evidence says the device can go faster; nothing here says why it did not.
+            Text = d.ExpectedSpeed is { } could ? $"Capable of {could}, running slower" : "Running below what it reports it can do",
         }, "Caption");
         why.Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["Warn"];
         stack.Children.Add(why);
