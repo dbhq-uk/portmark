@@ -581,25 +581,8 @@ internal static class Program
         List<BatteryReport> ends = samples.Select(s => s.End ?? s.Start).OfType<BatteryReport>().ToList();
         PrintBatteries(ends, sampleNote, Console.Out);
 
-        foreach (Portmark.Core.Power.BatterySample s in samples)
-        {
-            Console.WriteLine(samples.Count > 1 ? $"Sample, battery {s.Index}" : "Sample");
-            Console.WriteLine($"  Interval     {s.Elapsed.TotalSeconds:0.0}s");
-            if (s.StartMilliwattHours is int start)
-                Console.WriteLine($"  Capacity     {start} mWh at the start, "
-                                + (s.EndMilliwattHours is int end ? $"{end} mWh at the end" : "not reported at the end"));
-            // A zero change is printed as no change, not as "0W": the note says why it is not a
-            // measured zero flow, and the first version printed "gaining 0.0W" beside that note.
-            if (s.AverageNetMilliwatts is int average)
-                Console.WriteLine(average == 0
-                    ? "  Average      no change in reported capacity over the interval"
-                    : $"  Average      {DescribeFlow(average)} net, averaged over the interval");
-            if (s.Note is not null)
-                Console.WriteLine($"               {Wrap(s.Note, 60).Replace(Environment.NewLine, Environment.NewLine + "               ")}");
-            Console.WriteLine();
-        }
-
-        if (samples.Count > 0) Console.WriteLine(Wrap(Portmark.Core.Power.BatteryTelemetry.CoarseReportingNote));
+        // Rendered in Core so the words are tested, not only the numbers.
+        Portmark.Core.Power.BatterySampleText.Write(samples, Console.Out, Wrap);
         return samples.Count > 0 ? ExitOk : ExitUnsupported;
     }
 
@@ -668,8 +651,7 @@ internal static class Program
         }
     }
 
-    private static string DescribeFlow(int milliwatts)
-        => milliwatts < 0 ? $"losing {-milliwatts / 1000.0:0.0#}W" : $"gaining {milliwatts / 1000.0:0.0#}W";
+    private static string DescribeFlow(int milliwatts) => Portmark.Core.Power.BatterySampleText.DescribeFlow(milliwatts);
 
     private static string Wh(int milliwattHours) => $"{milliwattHours / 1000.0:0.0} Wh";
 
@@ -872,6 +854,7 @@ internal static class Program
               portmark --human         read all ports, print plain English
               portmark report          read all ports, write one file to attach to a hardware report
               portmark battery         read the batteries' own charge, rate and health
+              portmark battery --json  the same, as JSON
               portmark battery --sample SECONDS
                                        also average the battery's net charge flow over SECONDS
               portmark enable          switch on the port controller interface (needs admin, once)
@@ -891,7 +874,8 @@ internal static class Program
               0  ports were read
               1  an error occurred
               2  a one-time setup step is needed; run 'portmark enable' as administrator
-              3  this PC cannot report cable data
+              3  this PC cannot report the data this command reads: cable data for a port read,
+                 or, for 'battery', no battery answered
               'report' writes its file whichever of 0, 2 or 3 the reading gives, then exits with
               that code. It exits 1 only when the file could not be written.
 

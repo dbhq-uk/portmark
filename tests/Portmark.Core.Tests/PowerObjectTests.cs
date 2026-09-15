@@ -467,7 +467,12 @@ public class SourceListPagingTests
             ? Page(Pd.Fixed5V3A, Pd.Fixed9V3A, Pd.Fixed15V3A, Pd.Fixed20V5A)
             : Page(0, 0, 0));
 
+        // Objects.Count alone is 4 whether or not the page was taken, because zero words never
+        // decode. The bytes show the difference: an all-zero answer is "nothing to report"
+        // (UcsiResult.NoPayload), so the read stops there and the page is not appended.
         Assert.Equal(4, list.Objects.Count);
+        Assert.Equal(16, list.Bytes.Length);
+        Assert.Equal(Pd.Bytes(Pd.Fixed5V3A, Pd.Fixed9V3A, Pd.Fixed15V3A, Pd.Fixed20V5A), list.Bytes);
     }
 
     [Fact]
@@ -576,8 +581,9 @@ public class PowerSummaryTests
 
         Assert.DoesNotContain("drawing", summary);
         Assert.DoesNotContain("supply offers", summary);
-        Assert.Contains("this PC offers up to 15W", summary);
-        Assert.Contains("supplying 5V at 3A (15W)", summary);
+        Assert.Contains("this PC offers up to 15W, with a contract of 5V at 3A (15W)", summary);
+        // The RDO is a negotiated request, not a measurement of what is flowing.
+        Assert.DoesNotContain("supplying 5V", summary);
     }
 
     [Fact]
@@ -611,6 +617,8 @@ public class PowerSummaryTests
 
         string summary = PortmarkReader.Summarise(Port("consuming", power));
 
-        Assert.Contains("supply offers up to 100W, drawing 5V at 3A (15W)", summary);
+        Assert.Contains("supply offers up to 100W, with a contract of 5V at 3A (15W)", summary);
+        Assert.Contains("drawing power", summary);
+        Assert.DoesNotContain("drawing 5V", summary);
     }
 }

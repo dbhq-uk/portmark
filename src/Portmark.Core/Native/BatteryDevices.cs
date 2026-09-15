@@ -67,10 +67,11 @@ internal static unsafe class BatteryDevices
 
         var errors = new List<string>();
 
-        // Larger than the documented 32 bytes, on purpose. The ThinkPad T16 Gen 2 (AMD) refused a
-        // 32-byte buffer with ERROR_INSUFFICIENT_BUFFER and returned 36 bytes when given room. The
-        // first version of this reader sized it exactly and read no capacity at all. Only the documented 32 bytes
-        // are decoded; whatever follows is kept in the raw hex.
+        // Room beyond sizeof(BATTERY_INFORMATION), which is 36 bytes. The first version of this
+        // reader miscounted the structure as 32 and sized its buffer to that; the ThinkPad T16 Gen 2
+        // (AMD) refused it with ERROR_INSUFFICIENT_BUFFER, so no capacity was read at all. Once given
+        // room it returned 36 bytes, whose last four were then wrongly called undocumented: they are
+        // CycleCount. Anything a driver returns beyond the 36 is kept in the raw hex and not decoded.
         byte[]? information = Query(device, tag, BatteryInformation, 256, out int infoError);
         if (information is null) errors.Add($"The battery did not answer the information query: {Win32.Describe(infoError)}");
 

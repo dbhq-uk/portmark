@@ -108,6 +108,20 @@ public sealed class BatteryReport
     public string? Reason { get; init; }
 
     public BatteryRawReport Raw { get; init; } = new();
+
+    /// <summary>
+    /// The device interface path, kept only to pair a sample's two readings of the same battery.
+    /// Not serialised: it identifies the machine and adds nothing a reader can check.
+    /// </summary>
+    [JsonIgnore]
+    public string? DevicePath { get; set; }
+
+    /// <summary>
+    /// True when the device did not answer the tag query or could not be opened, so whether it holds
+    /// a battery is unknown. <see cref="Present"/> is false then too, and <see cref="Reason"/> says why.
+    /// </summary>
+    [JsonIgnore]
+    public bool Unanswered { get; init; }
 }
 
 public sealed class BatteryPowerStateReport
