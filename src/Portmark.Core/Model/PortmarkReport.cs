@@ -13,7 +13,11 @@ namespace Portmark.Core.Model;
 public sealed class PortmarkReport
 {
     public string Tool { get; init; } = "portmark";
-    public string SchemaVersion { get; init; } = "1";
+    /// <summary>
+    /// "2" since the changes listed in CHANGELOG.md: several fields became nullable and some values
+    /// changed meaning, so a consumer written against "1" should check it.
+    /// </summary>
+    public string SchemaVersion { get; init; } = "2";
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public MachineReport Machine { get; init; } = new();
     public CapabilityReport Capability { get; init; } = new();

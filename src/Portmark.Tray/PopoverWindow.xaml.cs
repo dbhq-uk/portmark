@@ -112,7 +112,7 @@ public partial class PopoverWindow : Window
             stack.Children.Add(Styled(new TextBlock { Text = "See charging speeds" }, "Value"));
             stack.Children.Add(Styled(new TextBlock
             {
-                Text = "Show how much power each port can deliver and what it is delivering now. "
+                Text = "Show what each charger offers and the power contract in force right now. "
                      + "Needs one admin approval, and can be turned off again from the tray menu.",
             }, "Caption"));
 

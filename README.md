@@ -6,7 +6,7 @@
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4.svg)](#install)
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
-[![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen.svg)](#building)
+[![Tests](https://img.shields.io/badge/tests-410%20passing-brightgreen.svg)](#building)
 
 **A USB-C cable, charger and port checker for Windows. Find out what your cable, charger and
 adapter can actually do, why your laptop charges slowly, and get told "unknown" when your PC
@@ -39,13 +39,19 @@ Port 1
   ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **
   A 15W contract is in force, but this supply offers up to 100W. The
   controller nonetheless reports a nominal charging rate, so its firmware
-  is not treating this as a shortfall. The battery is at 30 percent, so a
-  full battery does not explain this, though a charge limit could.
+  is not treating this as a shortfall. The battery reports a rate of zero.
+  Some batteries report only discharging rates, so this is not taken as
+  evidence that the charge is holding. The battery is at 100 percent,
+  which could explain a low contract: a battery with little left to take
+  on draws little. It does not rule out a fault. Why the contract is
+  lower, and whether the supply can deliver what it advertises, cannot be
+  read from here.
   Cable rating at least 5A, deduced not reported
 ```
 
-A 100W charger, a laptop taking 15W of it, and a battery falling while Windows says "charging".
-That reading is from the machine portmark was developed on, cut to the relevant lines.
+A 100W charger holding a laptop to a 15W contract. That reading is from the machine portmark was
+developed on, cut to the relevant lines. Earlier the same day, on the same contract, its battery
+fell from 46 percent to 30 percent while Windows reported it as charging.
 
 ## Why is my USB-C device running slowly?
 
@@ -75,29 +81,16 @@ companion port. A device's declared USB version is not used, because a USB 2.0 m
 ## Why is my laptop charging slowly over USB-C?
 
 The same comparison works for charging. portmark reads what the supply offers and the contract
-actually in force, and tells you when most of the offer is going unused:
+actually in force, and tells you when most of the offer is going unused. The reading at the top of
+this page is that case.
 
-```
-Port 1
-  Negotiated   5V at 3A (15W)
-  Charging     nominal charging rate, according to the controller
-  Supply offers
-    - 20V at 5A (100W)
-
-  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **
-  A 15W contract is in force, but this supply offers up to 100W. The controller
-  nonetheless reports a nominal charging rate, so its firmware is not treating this
-  as a shortfall. The battery is at 43 percent, so a full battery does not explain
-  this, though a charge limit could.
-```
-
-That is a real reading from the machine portmark was developed on, cut to the relevant lines: the
-full output lists all four supply offers and goes on to what the reading cannot tell. It matters because
-everything else on that machine said the opposite. Windows reported the battery as charging while
-it fell from 46 percent to 43 percent. The port controller reported a nominal charging rate
-throughout. The battery charge is read for one reason: a nearly full battery draws very little and
-that is correct, so without it the honest answer would have to include an excuse that did not
-apply.
+It matters because everything else on that machine said the opposite. Earlier the same day, on the
+same 15W contract, the battery fell from 46 percent while Windows reported it as charging and the
+port controller reported a nominal charging rate throughout. portmark reads the battery for that
+reason. A nearly full battery draws very little and that is correct, so the battery's own charge
+and rate are what separate a small contract that could be expected from one that cannot. At 100
+percent, as in the reading above, portmark offers the full battery as a possible explanation and
+still does not rule out a fault. Below 90 percent it says a full battery does not explain the gap.
 
 portmark names no cause. It reports the gap, what the controller thinks of it, and what the
 evidence cannot tell. A supply advertising 100W is not proof that it can deliver 100W.
@@ -177,7 +170,8 @@ Exit codes: `0` read successfully, `1` error, `2` a one-time setup step is neede
 cannot report this data.
 
 The JSON is the contract. It is camelCase, includes the raw bytes and CCI values for every
-response so you can check or redo the decoding yourself, and carries a `schemaVersion`.
+response so you can check or redo the decoding yourself, and carries a `schemaVersion`. Changes
+to it are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ```powershell
 portmark | ConvertFrom-Json | Select-Object -ExpandProperty connectors
