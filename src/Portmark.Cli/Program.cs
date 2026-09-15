@@ -260,7 +260,11 @@ internal static class Program
                     output.WriteLine($"  Charging     {charging}, according to the controller");
                 if (power.PartnerSource.Count > 0)
                 {
-                    output.WriteLine($"  Supply offers");
+                    // When this PC is the source, the attached device is not the supply; any
+                    // source objects it lists are what it could offer as a dual-role device.
+                    output.WriteLine(connector.PowerDirection == "supplying"
+                        ? "  Attached device offers"
+                        : "  Supply offers");
                     foreach (PowerObjectReport pdo in power.PartnerSource)
                         output.WriteLine($"    - {pdo.Display}");
                 }
