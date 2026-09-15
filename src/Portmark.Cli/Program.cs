@@ -15,7 +15,7 @@ internal static class Program
     private const int ExitNeedsSetup = 2;
     private const int ExitUnsupported = 3;
 
-    internal const string Version = "0.2.0";
+    internal const string Version = "0.3.0";
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
