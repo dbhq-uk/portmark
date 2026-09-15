@@ -165,9 +165,9 @@ internal static class Program
 
         foreach (Portmark.Core.Model.BillboardReport b in found)
         {
-            Console.WriteLine($"Billboard device {b.VendorId}:{b.ProductId}");
+            Console.WriteLine($"Billboard device {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  [{m.Index}] {m.Name}  mode {m.ModeNumber}  -> {m.State}");
+                Console.WriteLine($"  [{m.Index}] {ModeLabel(m.Name, m.Svid, m.VendorName)}  mode {m.ModeNumber}  -> {m.State}");
 
             Console.WriteLine(b.CarriesVideo
                 ? "  Video: DisplayPort alternate mode entered successfully."
@@ -228,12 +228,12 @@ internal static class Program
 
             if (connector.SupportedAlternateModes is { } modes)
                 Console.WriteLine(modes.DataAvailable && modes.Modes.Count > 0
-                    ? $"  Alt modes    {string.Join(", ", modes.Modes.Select(m => m.Name))}{(modes.Complete ? "" : " (list incomplete)")}"
+                    ? $"  Alt modes    {string.Join(", ", modes.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(modes.Complete ? "" : " (list incomplete)")}"
                     : $"  Alt modes    {(modes.DataAvailable ? "none listed" : "not listed by this controller")}");
             if (connector.PartnerAlternateModes is { DataAvailable: true, Modes.Count: > 0 } offered)
-                Console.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => m.Name))}{(offered.Complete ? "" : " (list incomplete)")}");
+                Console.WriteLine($"  Offered      {string.Join(", ", offered.Modes.Select(m => ModeLabel(m.Name, m.Svid, m.VendorName)))}{(offered.Complete ? "" : " (list incomplete)")}");
             if (connector.ActiveAlternateMode is { } active)
-                Console.WriteLine($"  Current mode {active.Name}"
+                Console.WriteLine($"  Current mode {ModeLabel(active.Name, active.Svid, active.VendorName)}"
                                 + (connector.ActiveAlternateModeConfirmed
                                     ? ""
                                     : ", on the controller's word alone and not confirmed"));
@@ -325,7 +325,7 @@ internal static class Program
         {
             string branch = last ? "└─ " : "├─ ";
             string detail = node.Device is { } d
-                ? $"  [{d.VendorId}:{d.ProductId}, {d.Speed}]"
+                ? $"  [{VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId}, {d.Speed}]"
                 : "";
             string warn = node.Device?.IsUnderperforming == true ? "  ** slow **" : "";
             string ambiguous = node.AmbiguousTopology ? "  (position uncertain: identical hubs)" : "";
@@ -410,7 +410,7 @@ internal static class Program
                 if (change.Kind == Portmark.Core.Usb.UsbChangeKind.Attached)
                 {
                     Console.WriteLine($"[{stamp}] + {name}");
-                    Console.WriteLine($"          {d.VendorId}:{d.ProductId}, {d.DeviceClass}, {d.Speed}");
+                    Console.WriteLine($"          {VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId}, {d.DeviceClass}, {d.Speed}");
                     if (d.MaxPowerMilliamps is int ma) Console.WriteLine($"          requests up to {ma} mA");
                     if (d.LinkDiagnosis is not null)
                     {
@@ -420,7 +420,7 @@ internal static class Program
                 }
                 else
                 {
-                    Console.WriteLine($"[{stamp}] - {name}  ({d.VendorId}:{d.ProductId})");
+                    Console.WriteLine($"[{stamp}] - {name}  ({VendorLabel(d.VendorId, d.VendorName)}:{d.ProductId})");
                 }
 
                 Console.WriteLine();
@@ -457,6 +457,7 @@ internal static class Program
                        ?? $"Unidentified {d.DeviceClass} device";
             Console.WriteLine($"{name}{(d.IsHub ? "  [hub]" : "")}");
             Console.WriteLine($"  ID           {d.VendorId}:{d.ProductId}");
+            if (d.VendorName is not null) Console.WriteLine($"  Vendor ID    {d.VendorId} is registered to {d.VendorName}");
             if (d.Manufacturer is not null) Console.WriteLine($"  Maker        {d.Manufacturer}");
             if (d.SerialNumber is not null) Console.WriteLine($"  Serial       {d.SerialNumber}");
             Console.WriteLine($"  Class        {d.DeviceClass}");
@@ -483,9 +484,9 @@ internal static class Program
     {
         foreach (Portmark.Core.Model.BillboardReport b in report.Billboards)
         {
-            Console.WriteLine($"Adapter {b.VendorId}:{b.ProductId}");
+            Console.WriteLine($"Adapter {VendorLabel(b.VendorId, b.VendorName)}:{b.ProductId}");
             foreach (Portmark.Core.Model.AlternateModeReport m in b.Modes)
-                Console.WriteLine($"  {m.Name}: {m.State}");
+                Console.WriteLine($"  {ModeLabel(m.Name, m.Svid, m.VendorName)}: {m.State}");
             Console.WriteLine(b.CarriesVideo
                 ? "  Video        yes, DisplayPort is active through this adapter"
                 : b.SupportsVideo
@@ -494,6 +495,23 @@ internal static class Program
             Console.WriteLine();
         }
     }
+
+    /// <summary>
+    /// A vendor ID with the name registered to it in brackets, as in "0x05AC (Apple, Inc.)", or the
+    /// bare ID when the vendor list does not name it. The brackets are the registered name, not
+    /// the maker: the help text says so, and the device's own manufacturer string is shown apart.
+    /// </summary>
+    private static string VendorLabel(string vendorId, string? vendorName)
+        => vendorName is null ? vendorId : $"{vendorId} ({vendorName})";
+
+    /// <summary>
+    /// A mode's name, with the registered vendor name added only where the name is the bare SVID.
+    /// A mode that already has a name of its own, such as DisplayPort, is left as it is.
+    /// </summary>
+    private static string ModeLabel(string name, string svid, string? vendorName)
+        => vendorName is not null && name.Contains(svid, StringComparison.OrdinalIgnoreCase)
+            ? $"{name} ({vendorName})"
+            : name;
 
     private static string DescribeCurrent(CableReport cable)
     {
@@ -635,6 +653,10 @@ internal static class Program
             NOTES
               Fields that the hardware did not report are null in JSON, and say so in --human
               output. Nothing is inferred from the shape of a connector.
+
+              A name in brackets after a vendor ID, as in 0x05AC (Apple, Inc.), is the name that
+              ID is registered to in the USB ID Repository. It says who holds the number, not who
+              made the device.
 
               portmark only ever reads. It never sends a command that changes port state.
             """);
