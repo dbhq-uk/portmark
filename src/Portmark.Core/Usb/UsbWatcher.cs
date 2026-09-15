@@ -46,7 +46,10 @@ public static class UsbWatcher
     /// </summary>
     public static IEnumerable<UsbWatchBatch> WatchWithFaults(TimeSpan interval, CancellationToken cancel)
     {
-        UsbScanReport scan = UsbDeviceScanner.Scan();
+        // Link evidence is read once per connection rather than once per poll: a BOS request to
+        // every attached device every second is a cost the devices pay for no new information.
+        var linkCache = new UsbLinkCache();
+        UsbScanReport scan = UsbDeviceScanner.Scan(linkCache);
         Dictionary<string, UsbDeviceReport> previous = Index(scan.Devices);
         var faults = new UsbPortFaultTracker();
         faults.Prime(scan.PortStatuses);
@@ -64,7 +67,7 @@ public static class UsbWatcher
 
             if (cancel.IsCancellationRequested) yield break;
 
-            scan = UsbDeviceScanner.Scan();
+            scan = UsbDeviceScanner.Scan(linkCache);
             Dictionary<string, UsbDeviceReport> current = Index(scan.Devices);
             List<UsbChange> changes = Diff(previous, current);
             List<UsbPortStatusReport> entered = faults.Update(scan.PortStatuses);

@@ -683,6 +683,7 @@ internal static class Program
         {
             Console.WriteLine($"{Portmark.Core.Usb.UsbTopology.HubLabel(p.HubPath)}, port {p.Port}");
             if (p.VendorId is not null) Console.WriteLine($"  ID           {p.VendorId}:{p.ProductId}");
+            if (p.VendorName is not null) Console.WriteLine($"  Vendor ID    {p.VendorId} is registered to {p.VendorName}");
             Console.WriteLine($"  Status       {p.ConnectionStatus}");
             if (p.IsFault)
             {
@@ -705,6 +706,7 @@ internal static class Program
         {
             string stamp = DateTime.Now.ToString("HH:mm:ss");
             Console.WriteLine($"[{stamp}] ! {Portmark.Core.Usb.UsbTopology.HubLabel(f.HubPath)}, port {f.Port}  ** PORT FAULT **");
+            if (f.VendorId is not null) Console.WriteLine($"          {VendorLabel(f.VendorId, f.VendorName)}:{f.ProductId}");
             Console.WriteLine($"          {Wrap($"{f.Description} ({f.ConnectionStatus}).", 64).Replace(Environment.NewLine, Environment.NewLine + "          ")}");
             Console.WriteLine();
         }
@@ -871,6 +873,10 @@ internal static class Program
               portmark                 read all ports, print JSON
               portmark --human         read all ports, print plain English
               portmark report          read all ports, write one file to attach to a hardware report
+              portmark usb             list attached USB devices, their link speed and port faults
+              portmark usb --json      the same, as JSON
+              portmark tree            show attached USB devices as the tree they form
+              portmark tree --json     the same, as JSON
               portmark battery         read the batteries' own charge, rate and health
               portmark battery --sample SECONDS
                                        also average the battery's net charge flow over SECONDS

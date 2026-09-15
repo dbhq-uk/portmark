@@ -47,11 +47,27 @@ public static class LinkDiagnostic
         _ => "unknown",
     };
 
-    /// <summary>The negotiated speed, raised to SuperSpeedPlus when the hub says so.</summary>
+    /// <summary>
+    /// The speed a device is operating at, for comparison: the hub's operating flags in order,
+    /// SuperSpeedPlus then SuperSpeed, and the legacy speed code only when neither is set.
+    ///
+    /// Only the SuperSpeedPlus flag used to override the legacy code, but a hub can leave that code
+    /// at High while its flags say the device is operating at SuperSpeed. Such a device was shown
+    /// at 480 Mbps and flagged as running below the SuperSpeed it was running at.
+    /// </summary>
+    public static int OperatingRank(byte speed, ConnectionSpeedInfo? connection)
+        => connection is { OperatingAtSuperSpeedPlusOrHigher: true } ? RankSuperSpeedPlus
+         : connection is { OperatingAtSuperSpeedOrHigher: true } ? SpeedSuper
+         : speed;
+
+    /// <summary>The negotiated speed, raised to what the hub's operating flags say.</summary>
     public static string OperatingSpeed(byte speed, ConnectionSpeedInfo? connection)
-        => connection is { OperatingAtSuperSpeedPlusOrHigher: true }
-            ? $"SuperSpeedPlus, {SuperSpeedPlusLabel}"
-            : UsbHubIo.SpeedName(speed);
+        => OperatingRank(speed, connection) switch
+        {
+            RankSuperSpeedPlus when connection is { OperatingAtSuperSpeedPlusOrHigher: true } => $"SuperSpeedPlus, {SuperSpeedPlusLabel}",
+            SpeedSuper => UsbHubIo.SpeedName(SpeedSuper),
+            _ => UsbHubIo.SpeedName(speed),
+        };
 
     /// <summary>
     /// Decides whether a device is running slower than the evidence says it can.
@@ -68,9 +84,11 @@ public static class LinkDiagnostic
         var fine = new LinkAssessment(operating, false, null, null);
 
         if (deviceClass is 0x11 or 0x09 || isHub) return fine;
-        if (speed > SpeedSuper) return fine;   // not a documented speed, so nothing to compare
 
-        int operatingRank = connection is { OperatingAtSuperSpeedPlusOrHigher: true } ? RankSuperSpeedPlus : speed;
+        int operatingRank = OperatingRank(speed, connection);
+
+        // An undocumented legacy code, with no operating flag in its place, leaves nothing to compare.
+        if (operatingRank == speed && speed > SpeedSuper) return fine;
 
         // The hub's flags come first because they are Windows' own reading. The BOS is the
         // device's word, used when the hub says nothing. SuperSpeedPlus is only ever taken from the
@@ -94,7 +112,7 @@ public static class LinkDiagnostic
             SpeedSuper => SpeedLabel(SpeedSuper),
             _ => SpeedLabel(SpeedHigh),
         };
-        string running = c.rank == RankSuperSpeedPlus && speed == SpeedSuper
+        string running = c.rank == RankSuperSpeedPlus && operatingRank == SpeedSuper
             ? "at SuperSpeed but not SuperSpeedPlus"
             : $"at {SpeedLabel(speed)}";
 

@@ -232,10 +232,15 @@ public partial class App : System.Windows.Application
     {
         if (_tray is null) return;
 
+        // The IDs are there only when the hub returned a valid descriptor with the status.
+        string id = fault.VendorId is null
+            ? ""
+            : $" ({PopoverWindow.VendorLabel(fault.VendorId, fault.VendorName)}:{fault.ProductId})";
+
         _tray.ShowBalloonTip(
             8000,
             "USB hub reported a port fault",
-            $"{UsbTopology.HubLabel(fault.HubPath)}, port {fault.Port}: {fault.Description}.",
+            $"{UsbTopology.HubLabel(fault.HubPath)}, port {fault.Port}{id}: {fault.Description}.",
             Forms.ToolTipIcon.Warning);
     }
 
