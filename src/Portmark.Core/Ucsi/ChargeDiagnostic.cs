@@ -91,7 +91,12 @@ public static class ChargeDiagnostic
         };
 
         string flow = battery is null ? "" : Flow(battery) + " ";
-        bool drainMeasured = battery?.RateMilliwatts < 0;
+
+        // The warning that Windows can say charging while the battery falls is only worth giving when
+        // the battery has not already said which way its charge is going. The first version dropped
+        // it only for a measured drain, so a measured gain read "net charge of 12W" and then warned
+        // that the battery might be falling. A zero rate is not trusted, so it keeps the warning.
+        bool directionMeasured = battery?.RateMilliwatts is int rate && rate != 0;
 
         // The battery percentage can take one explanation away, never grant one. Below the
         // threshold a full battery cannot be the reason. Above it, a full battery might be, but a
@@ -105,7 +110,7 @@ public static class ChargeDiagnostic
                   + "contract: a battery with little left to take on draws little. It does not rule out a fault.",
             _ => $"The battery is at {batteryPercent} percent, so a full battery does not explain this, though a "
                + "charge limit could. Check the cable and which port the supply is in"
-               + (drainMeasured
+               + (directionMeasured
                    ? "."
                    : ", and be aware that Windows can report this as charging while the battery falls."),
         };
@@ -124,8 +129,11 @@ public static class ChargeDiagnostic
     ///
     /// A zero is not trusted. Microsoft notes some batteries report only discharging rates, and
     /// this machine's WMI charge rate read zero while the battery fell.
+    ///
+    /// When not every battery could be read, the gap is the whole sentence: the rate is unknown by
+    /// construction, and the batteries that answered are not presented as the machine.
     /// </summary>
-    private static string Flow(BatteryFlow battery) => battery.RateMilliwatts switch
+    private static string Flow(BatteryFlow battery) => battery.CoverageNote ?? battery.RateMilliwatts switch
     {
         int drain and < 0 when battery.OnExternalPower =>
             $"The battery measures a net drain of {Watts(-drain)} while on external power: it is losing charge "

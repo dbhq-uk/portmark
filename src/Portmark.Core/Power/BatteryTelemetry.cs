@@ -7,9 +7,10 @@ namespace Portmark.Core.Power;
 /// <summary>
 /// What the batteries say together: the one reading that can tell a machine running down on a
 /// small contract from one that is simply full. Null wherever the batteries did not say.
+/// <see cref="CoverageNote"/> says why the totals are unknown when not every battery could be read.
 /// </summary>
 public sealed record BatteryFlow(int? RateMilliwatts, bool OnExternalPower, bool Discharging, bool Charging,
-                                 int? ChargePercent);
+                                 int? ChargePercent, string? CoverageNote = null);
 
 /// <summary>Two capacity readings of one battery and the time between them.</summary>
 public sealed class BatterySample
@@ -56,8 +57,15 @@ public static class BatteryTelemetry
     public const uint UnknownVoltage = 0xFFFFFFFF;
     public const int UnknownRate = int.MinValue;
 
-    /// <summary>sizeof(BATTERY_INFORMATION): Capabilities, Technology, Reserved[3], Chemistry[4], five ULONGs.</summary>
-    public const int InformationLength = 32;
+    /// <summary>
+    /// sizeof(BATTERY_INFORMATION): Capabilities, Technology, Reserved[3], Chemistry[4], then six
+    /// ULONGs: DesignedCapacity, FullChargedCapacity, DefaultAlert1, DefaultAlert2, CriticalBias and
+    /// CycleCount. The first version counted five ULONGs, made it 32, read CriticalBias as the cycle
+    /// count and called the real CycleCount undocumented trailing bytes.
+    /// </summary>
+    public const int InformationLength = 36;
+
+    private const int CycleCountOffset = 32;
 
     /// <summary>sizeof(BATTERY_STATUS): PowerState, Capacity, Voltage, Rate.</summary>
     public const int StatusLength = 16;
@@ -87,7 +95,8 @@ public static class BatteryTelemetry
 
         uint? designed = haveInformation ? Known(BitConverter.ToUInt32(information!, 12)) : null;
         uint? fullCharged = haveInformation ? Known(BitConverter.ToUInt32(information!, 16)) : null;
-        uint cycles = haveInformation ? BitConverter.ToUInt32(information!, 28) : 0;
+        // Zero is Microsoft's "does not support a cycle counter", so it becomes null below.
+        uint cycles = haveInformation ? BitConverter.ToUInt32(information!, CycleCountOffset) : 0;
 
         uint? remaining = haveStatus ? Known(BitConverter.ToUInt32(status!, 4)) : null;
         uint voltageRaw = haveStatus ? BitConverter.ToUInt32(status!, 8) : UnknownVoltage;
@@ -166,6 +175,15 @@ public static class BatteryTelemetry
         Reason = reason,
     };
 
+    /// <summary>A battery device that did not answer at all, so whether it holds a battery is unknown.</summary>
+    public static BatteryReport Unanswered(int index, string? reason) => new()
+    {
+        Index = index,
+        Present = false,
+        Unanswered = true,
+        Reason = reason,
+    };
+
     /// <summary>
     /// The system batteries taken together, or null when none answered with a status, which is
     /// what lets the diagnostic fall back to GetSystemPowerStatus. A UPS is left out: its drain
@@ -173,32 +191,67 @@ public static class BatteryTelemetry
     /// </summary>
     public static BatteryFlow? Summarise(IEnumerable<BatteryReport> batteries)
     {
-        List<BatteryReport> system = batteries
-            .Where(b => b.Present && b.PowerState is not null && b.IsSystemBattery == true && b.IsShortTerm != true)
+        List<BatteryReport> all = batteries.ToList();
+
+        // Which batteries count is decided before anything is filtered on what was read. The first
+        // version kept only batteries with a status and then added up, so with two system batteries
+        // and one unread, the readable one's rate and percentage were given as the machine's.
+        List<BatteryReport> system = all
+            .Where(b => b.Present && b.IsSystemBattery == true && b.IsShortTerm != true)
             .ToList();
-        if (system.Count == 0) return null;
+        List<BatteryReport> read = system.Where(b => b.PowerState is not null).ToList();
+        if (read.Count == 0) return null;
+
+        // Without its information block a battery's role is unknown, and a device that did not
+        // answer may hold a battery. Either could be running this PC, so neither is left out silently.
+        int unread = system.Count - read.Count;
+        int undetermined = all.Count(b => b.Unanswered || (b.Present && b.IsSystemBattery is null));
+        string? coverage = CoverageNote(unread, system.Count, undetermined);
 
         // One unknown rate makes the total unknown. Adding the rest would understate it.
-        int? rate = system.All(b => b.RateMilliwatts is not null) ? system.Sum(b => b.RateMilliwatts!.Value) : null;
+        int? rate = coverage is null && read.All(b => b.RateMilliwatts is not null)
+            ? read.Sum(b => b.RateMilliwatts!.Value)
+            : null;
 
         int? percent = null;
-        if (system.All(b => b.RemainingCapacityMilliwattHours is not null && b.FullChargeCapacityMilliwattHours is not null))
+        if (coverage is not null)
         {
-            long full = system.Sum(b => (long)b.FullChargeCapacityMilliwattHours!.Value);
-            long remaining = system.Sum(b => (long)b.RemainingCapacityMilliwattHours!.Value);
+            // Left unknown: a percentage of the batteries that answered is not the machine's.
+        }
+        else if (read.All(b => b.RemainingCapacityMilliwattHours is not null && b.FullChargeCapacityMilliwattHours is not null))
+        {
+            long full = read.Sum(b => (long)b.FullChargeCapacityMilliwattHours!.Value);
+            long remaining = read.Sum(b => (long)b.RemainingCapacityMilliwattHours!.Value);
             if (full > 0) percent = (int)Math.Round(remaining * 100.0 / full);
         }
-        else if (system.Count == 1)
+        else if (read.Count == 1)
         {
-            percent = system[0].ChargePercent;
+            percent = read[0].ChargePercent;
         }
 
         return new BatteryFlow(
             rate,
-            system.Any(b => b.PowerState!.OnExternalPower),
-            system.Any(b => b.PowerState!.Discharging),
-            system.Any(b => b.PowerState!.Charging),
-            percent);
+            read.Any(b => b.PowerState!.OnExternalPower),
+            read.Any(b => b.PowerState!.Discharging),
+            read.Any(b => b.PowerState!.Charging),
+            percent,
+            coverage);
+    }
+
+    private static string? CoverageNote(int unread, int system, int undetermined)
+    {
+        if (unread == 0 && undetermined == 0) return null;
+
+        var gaps = new List<string>();
+        if (unread > 0)
+            gaps.Add($"{unread} of the {system} system batteries did not report {(unread == 1 ? "its" : "their")} status");
+        if (undetermined > 0)
+            gaps.Add(undetermined == 1
+                ? "1 battery device could not be read far enough to tell whether it runs this PC"
+                : $"{undetermined} battery devices could not be read far enough to tell whether they run this PC");
+
+        return $"Not every battery could be read: {string.Join(", and ", gaps)}. The combined charge rate "
+             + "and percentage are therefore unknown, and the batteries that did answer are not taken as the whole.";
     }
 
     /// <summary>The average net charge flow between two readings of the same battery.</summary>
@@ -227,7 +280,8 @@ public static class BatteryTelemetry
 
         return new BatterySample
         {
-            Index = start.Index,
+            // The end reading's position, which is the one the sample's battery listing shows.
+            Index = end.Index,
             StartMilliwattHours = start.RemainingCapacityMilliwattHours,
             EndMilliwattHours = end.RemainingCapacityMilliwattHours,
             ChangeMilliwattHours = change,
@@ -254,21 +308,19 @@ public static class BatteryTelemetry
         for (int i = 0; i < readings.Count; i++)
         {
             BatteryDeviceReading reading = readings[i];
+            BatteryReport report;
             if (reading.Absent)
+                report = Absent(i + 1, "No battery is in this battery slot.");
+            else if (reading.Tag is null)
+                report = Unanswered(i + 1, reading.Error);
+            else
             {
-                batteries.Add(Absent(i + 1, "No battery is in this battery slot."));
-                continue;
+                report = Decode(i + 1, reading.Information, reading.Status,
+                                reading.DeviceName, reading.ManufacturerName, reading.Error);
+                report.Raw.Tag = reading.Tag;
             }
 
-            if (reading.Tag is null)
-            {
-                batteries.Add(new BatteryReport { Index = i + 1, Present = false, Reason = reading.Error });
-                continue;
-            }
-
-            BatteryReport report = Decode(i + 1, reading.Information, reading.Status,
-                                          reading.DeviceName, reading.ManufacturerName, reading.Error);
-            report.Raw.Tag = reading.Tag;
+            report.DevicePath = reading.Path;
             batteries.Add(report);
         }
 
@@ -285,12 +337,26 @@ public static class BatteryTelemetry
         var clock = Stopwatch.StartNew();
         Thread.Sleep(interval);
         List<BatteryReport> end = ReadAll(out _);
-        TimeSpan elapsed = clock.Elapsed;
+        return Pair(start, end, clock.Elapsed);
+    }
 
+    /// <summary>
+    /// Pairs each battery's start reading with its end reading by device interface path, preferring
+    /// the same tag. The first version paired by enumeration position: if a battery went away another
+    /// could take its place in the list, and tags are per device so the two could even share one.
+    /// A same-path reading under a new tag is still paired, so <see cref="Compare"/> can say why it
+    /// does not compare them.
+    /// </summary>
+    public static List<BatterySample> Pair(IReadOnlyList<BatteryReport> start, IReadOnlyList<BatteryReport> end,
+                                           TimeSpan elapsed)
+    {
         var samples = new List<BatterySample>();
         foreach (BatteryReport first in start.Where(b => b.Present))
         {
-            BatteryReport? last = end.FirstOrDefault(b => b.Index == first.Index);
+            List<BatteryReport> sameDevice = first.DevicePath is null
+                ? []
+                : end.Where(b => b.Present && b.DevicePath == first.DevicePath).ToList();
+            BatteryReport? last = sameDevice.FirstOrDefault(b => b.Raw.Tag == first.Raw.Tag) ?? sameDevice.FirstOrDefault();
             samples.Add(last is null
                 ? new BatterySample
                 {

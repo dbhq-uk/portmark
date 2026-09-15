@@ -443,22 +443,26 @@ public static class PortmarkReader
         // report cable data at all. Which side is the source decides the words: while this PC
         // supplies, the attached device is not "the supply" and nothing is being drawn from it,
         // which is what the first version said on a port powering a dock.
+        //
+        // The RDO is a negotiated request, not a measurement, so it is called a contract in both
+        // directions. The first version said "is supplying 5V at 3A" and "drawing 5V at 3A", which
+        // reads as power measured flowing; nothing here measures that.
         if (report.PowerDirection == "supplying")
         {
             if (report.Power.DataAvailable
                 && PowerDataObject.OfferCeilingMilliwatts(report.Power.LocalSource) is int localMw && localMw > 0)
             {
-                string supplied = report.Power.Negotiated is { SelectedKind: not null } n
-                    ? $" and is supplying {n.Display}"
+                string contract = report.Power.Negotiated is { SelectedKind: not null } n
+                    ? $", with a contract of {n.Display}"
                     : "";
-                parts.Add($"this PC offers up to {localMw / 1000.0:0.#}W{supplied}");
+                parts.Add($"this PC offers up to {localMw / 1000.0:0.#}W{contract}");
                 attached = string.Join(", ", parts);
             }
         }
         else if (report.Power.DataAvailable && report.Power.MaxAvailableMilliwatts is int mw && mw > 0)
         {
             string offered = $"supply offers up to {mw / 1000.0:0.#}W";
-            string negotiated = report.Power.Negotiated is { SelectedKind: not null } n ? $", drawing {n.Display}" : "";
+            string negotiated = report.Power.Negotiated is { SelectedKind: not null } n ? $", with a contract of {n.Display}" : "";
             parts.Add(offered + negotiated);
             attached = string.Join(", ", parts);
         }

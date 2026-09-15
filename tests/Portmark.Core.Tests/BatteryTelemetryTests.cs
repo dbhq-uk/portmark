@@ -12,15 +12,19 @@ namespace Portmark.Core.Tests;
 internal static class BatteryVectors
 {
     public static byte[] Information(uint capabilities = BatteryTelemetry.SystemBatteryFlag, string chemistry = "LION",
-                                     uint designed = 52_500, uint fullCharged = 47_880, uint cycles = 0)
+                                     uint designed = 52_500, uint fullCharged = 47_880, uint cycles = 0,
+                                     uint criticalBias = 0)
     {
-        var bytes = new byte[BatteryTelemetry.InformationLength];
+        // Capabilities, Technology, Reserved[3], Chemistry[4], DesignedCapacity,
+        // FullChargedCapacity, DefaultAlert1, DefaultAlert2, CriticalBias, CycleCount: 36 bytes.
+        var bytes = new byte[36];
         BitConverter.GetBytes(capabilities).CopyTo(bytes, 0);
         bytes[4] = 1;   // Technology: rechargeable
         for (int i = 0; i < 4 && i < chemistry.Length; i++) bytes[8 + i] = (byte)chemistry[i];
         BitConverter.GetBytes(designed).CopyTo(bytes, 12);
         BitConverter.GetBytes(fullCharged).CopyTo(bytes, 16);
-        BitConverter.GetBytes(cycles).CopyTo(bytes, 28);
+        BitConverter.GetBytes(criticalBias).CopyTo(bytes, 28);
+        BitConverter.GetBytes(cycles).CopyTo(bytes, 32);
         return bytes;
     }
 
@@ -190,10 +194,11 @@ public class BatteryTelemetryTests
     public void TheCapturedThinkPadBatteryDecodes()
     {
         // Captured on the ThinkPad T16 Gen 2 (AMD), 100W supply attached, battery reporting full.
-        // The driver returned 36 bytes for BatteryInformation, four more than the documented
-        // structure, and a 32-byte buffer was refused with ERROR_INSUFFICIENT_BUFFER. Only the
-        // documented 32 are decoded; the trailing 0x78 is kept in the raw hex and not guessed at.
-        // The design capacity has not been checked against the battery's label.
+        // The driver returned 36 bytes, which is sizeof(BATTERY_INFORMATION). The first version
+        // miscounted the structure as 32 bytes, so its 32-byte buffer was refused with
+        // ERROR_INSUFFICIENT_BUFFER, and it then read CriticalBias (zero here) as the cycle count
+        // and called the final 0x78 undocumented. That final ULONG is CycleCount: 120.
+        // The design capacity and cycle count have not been checked against the battery's label.
         BatteryReport b = BatteryTelemetry.Decode(1,
             Convert.FromHexString("00000080010000004C695000F04F010090140100C8000000D40D00000000000078000000"),
             Convert.FromHexString("050000007C14010075440000EB180000"),
@@ -209,12 +214,43 @@ public class BatteryTelemetryTests
         Assert.Equal(17_525, b.VoltageMillivolts);
         Assert.Equal(100, b.ChargePercent);
         Assert.Equal(82, b.HealthPercent);
-        Assert.Null(b.CycleCount);
+        Assert.Equal(120, b.CycleCount);
 
         BatteryPowerStateReport state = Assert.IsType<BatteryPowerStateReport>(b.PowerState);
         Assert.True(state.OnExternalPower);
         Assert.True(state.Charging);
         Assert.False(state.Discharging);
+    }
+
+    [Fact]
+    public void TheCycleCountIsTheLastUlong_NotCriticalBias()
+    {
+        BatteryReport b = BatteryTelemetry.Decode(1, BatteryVectors.Information(cycles: 57, criticalBias: 300),
+                                                  BatteryVectors.Status(0, 1_000, 11_000, 0));
+
+        Assert.Equal(36, BatteryTelemetry.InformationLength);
+        Assert.Equal(57, b.CycleCount);
+    }
+
+    [Fact]
+    public void AZeroCycleCountMeansNoCycleCounter()
+    {
+        // Microsoft: "If the battery does not support a cycle counter, this member is zero."
+        BatteryReport b = BatteryTelemetry.Decode(1, BatteryVectors.Information(cycles: 0, criticalBias: 300),
+                                                  BatteryVectors.Status(0, 1_000, 11_000, 0));
+
+        Assert.Null(b.CycleCount);
+    }
+
+    [Fact]
+    public void AThirtyTwoByteInformationBlockIsShortAndNotDecoded()
+    {
+        byte[] truncated = BatteryVectors.Information(cycles: 57)[..32];
+        BatteryReport b = BatteryTelemetry.Decode(1, truncated, BatteryVectors.Status(0, 1_000, 11_000, 0));
+
+        Assert.Null(b.CycleCount);
+        Assert.Null(b.DesignCapacityMilliwattHours);
+        Assert.Null(b.IsSystemBattery);
     }
 
     [Fact]
@@ -283,6 +319,86 @@ public class BatterySummaryTests
         Assert.Null(BatteryTelemetry.Summarise([Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000,
             capabilities: BatteryTelemetry.SystemBatteryFlag | BatteryTelemetry.ShortTermFlag)]));
     }
+
+    [Fact]
+    public void EveryBatteryReadMeansNoCoverageNote()
+    {
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000),
+            Battery(BatteryTelemetry.PowerOnLineFlag, 30_000, -1_000),
+        ]));
+
+        Assert.Null(flow.CoverageNote);
+    }
+
+    [Fact]
+    public void ASystemBatteryWithoutStatusMakesTheTotalUnknown()
+    {
+        // The first version dropped a battery without a status before adding up, so the one
+        // battery that answered had its rate and percentage reported as the whole machine's.
+        BatteryReport unread = BatteryTelemetry.Decode(2, BatteryVectors.Information(), null, reason: "status failed");
+
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000), unread,
+        ]));
+
+        Assert.Null(flow.RateMilliwatts);
+        Assert.Null(flow.ChargePercent);
+        Assert.Contains("1 of the 2 system batteries", flow.CoverageNote);
+    }
+
+    [Fact]
+    public void ABatteryWhoseRoleWasNotReadMakesTheTotalUnknown()
+    {
+        // Without its information block, whether it runs this PC is unknown, so it cannot be left out.
+        BatteryReport noInformation = BatteryTelemetry.Decode(2, null,
+            BatteryVectors.Status(BatteryVectors.OnLineDischarging, 40, 12_000, -200), reason: "information failed");
+
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000), noInformation,
+        ]));
+
+        Assert.Null(flow.RateMilliwatts);
+        Assert.Null(flow.ChargePercent);
+        Assert.NotNull(flow.CoverageNote);
+    }
+
+    [Fact]
+    public void ABatteryDeviceThatDidNotAnswerMakesTheTotalUnknown()
+    {
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000),
+            BatteryTelemetry.Unanswered(2, "The battery device could not be opened."),
+        ]));
+
+        Assert.Null(flow.RateMilliwatts);
+        Assert.Null(flow.ChargePercent);
+        Assert.NotNull(flow.CoverageNote);
+    }
+
+    [Fact]
+    public void AnEmptySlotIsNoCoverageGap()
+    {
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000),
+            BatteryTelemetry.Absent(2, "No battery is in this battery slot."),
+        ]));
+
+        Assert.Equal(-3_000, flow.RateMilliwatts);
+        Assert.Null(flow.CoverageNote);
+    }
+
+    [Fact]
+    public void AnUpsIsNoCoverageGap()
+    {
+        BatteryFlow flow = Assert.IsType<BatteryFlow>(BatteryTelemetry.Summarise([
+            Battery(BatteryVectors.OnLineDischarging, 10_000, -3_000),
+            BatteryTelemetry.Decode(2, BatteryVectors.Information(capabilities: 0), null),
+        ]));
+
+        Assert.Equal(-3_000, flow.RateMilliwatts);
+        Assert.Null(flow.CoverageNote);
+    }
 }
 
 /// <summary>
@@ -340,14 +456,96 @@ public class BatterySampleTests
         Assert.NotNull(s.Note);
     }
 
-    [Fact]
-    public void EveryNoteSaysTheReportingIsCoarse()
+    private static string Render(params BatterySample[] samples)
     {
-        BatterySample s = BatteryTelemetry.Compare(At(30_000), At(29_500), TimeSpan.FromSeconds(60));
+        var output = new StringWriter();
+        BatterySampleText.Write(samples, output, (text, _) => text);
+        return output.ToString();
+    }
 
-        Assert.Contains("coarse", BatteryTelemetry.CoarseReportingNote);
-        Assert.Contains("steps", BatteryTelemetry.CoarseReportingNote);
-        Assert.NotNull(s);
+    [Fact]
+    public void ARenderedZeroChangeIsNoChange_AndSaysTheReportingIsCoarse()
+    {
+        string text = Render(BatteryTelemetry.Compare(At(30_000), At(30_000), TimeSpan.FromSeconds(30)));
+
+        Assert.Contains("no change in reported capacity over the interval", text);
+        Assert.Contains("not evidence that no charge moved", text);
+        Assert.Contains(BatteryTelemetry.CoarseReportingNote, text);
+        // The first version printed "gaining 0.0W" beside the note saying it was not a zero flow.
+        Assert.DoesNotContain("gaining", text);
+        Assert.DoesNotContain("losing", text);
+    }
+
+    [Fact]
+    public void ARenderedChangeIsAnAverage_AndSaysTheReportingIsCoarse()
+    {
+        string text = Render(BatteryTelemetry.Compare(At(30_000), At(29_500), TimeSpan.FromSeconds(60)));
+
+        Assert.Contains("30000 mWh at the start, 29500 mWh at the end", text);
+        Assert.Contains("losing 30.0W net, averaged over the interval", text);
+        Assert.Contains(BatteryTelemetry.CoarseReportingNote, text);
+        Assert.Contains("not the power arriving through the cable", text);
+    }
+
+    [Fact]
+    public void NothingRenderedWithoutASample()
+    {
+        Assert.Equal("", Render());
+    }
+
+    private static BatteryReport OnDevice(int index, string path, uint capacity, uint tag = 1)
+    {
+        BatteryReport b = BatteryTelemetry.Decode(index, BatteryVectors.Information(),
+            BatteryVectors.Status(BatteryVectors.OnLineDischarging, capacity, 12_000, -8_000));
+        b.Raw.Tag = tag;
+        b.DevicePath = path;
+        return b;
+    }
+
+    [Fact]
+    public void ReadingsArePairedByDeviceNotByPosition()
+    {
+        // Tags are per device, so two batteries can share one. The first version paired by
+        // enumeration index, which pairs the wrong batteries when the order changes.
+        BatteryReport[] start = [OnDevice(1, @"\\?\battery#a", 30_000), OnDevice(2, @"\\?\battery#b", 10_000)];
+        BatteryReport[] end = [OnDevice(1, @"\\?\battery#b", 9_500), OnDevice(2, @"\\?\battery#a", 29_000)];
+
+        List<BatterySample> samples = BatteryTelemetry.Pair(start, end, TimeSpan.FromSeconds(60));
+
+        Assert.Equal(2, samples.Count);
+        BatterySample a = samples.Single(s => s.Start!.DevicePath == @"\\?\battery#a");
+        BatterySample b = samples.Single(s => s.Start!.DevicePath == @"\\?\battery#b");
+        Assert.Equal(@"\\?\battery#a", a.End!.DevicePath);
+        Assert.Equal(-1_000, a.ChangeMilliwattHours);
+        Assert.Equal(@"\\?\battery#b", b.End!.DevicePath);
+        Assert.Equal(-500, b.ChangeMilliwattHours);
+    }
+
+    [Fact]
+    public void ABatteryThatLeavesIsNotPairedWithTheOneThatTakesItsPlace()
+    {
+        BatteryReport[] start = [OnDevice(1, @"\\?\battery#a", 30_000), OnDevice(2, @"\\?\battery#b", 10_000)];
+        BatteryReport[] end = [OnDevice(1, @"\\?\battery#b", 9_500)];
+
+        List<BatterySample> samples = BatteryTelemetry.Pair(start, end, TimeSpan.FromSeconds(60));
+
+        BatterySample a = samples.Single(s => s.Start!.DevicePath == @"\\?\battery#a");
+        Assert.Null(a.End);
+        Assert.Null(a.AverageNetMilliwatts);
+        Assert.Contains("did not answer", a.Note);
+        Assert.Equal(-500, samples.Single(s => s.Start!.DevicePath == @"\\?\battery#b").ChangeMilliwattHours);
+    }
+
+    [Fact]
+    public void ASameDeviceWithANewTagIsStillNotCompared()
+    {
+        BatteryReport[] start = [OnDevice(1, @"\\?\battery#a", 30_000, tag: 1)];
+        BatteryReport[] end = [OnDevice(1, @"\\?\battery#a", 29_000, tag: 2)];
+
+        BatterySample s = Assert.Single(BatteryTelemetry.Pair(start, end, TimeSpan.FromSeconds(60)));
+
+        Assert.Null(s.AverageNetMilliwatts);
+        Assert.Contains("tag", s.Note);
     }
 }
 
@@ -456,6 +654,34 @@ public class ChargeDiagnosticBatteryFlowTests
 
         Assert.Contains("Windows can report this as charging", diagnosis);
         Assert.DoesNotContain("battery measures", diagnosis);
+    }
+
+    [Fact]
+    public void AMeasuredGainDropsTheFallingBatteryWarning()
+    {
+        // The first version dropped the warning only for a measured drain, so a measured gain
+        // below 90 percent read "net charge of 12W" and then warned that the battery might be falling.
+        string diagnosis = Explain(new BatteryFlow(12_000, true, false, true, 30));
+
+        Assert.Contains("net charge of 12W", diagnosis);
+        Assert.DoesNotContain("Windows can report this as charging", diagnosis);
+    }
+
+    [Fact]
+    public void AZeroOrUnknownRateKeepsTheFallingBatteryWarning()
+    {
+        Assert.Contains("Windows can report this as charging", Explain(new BatteryFlow(0, true, false, true, 30)));
+        Assert.Contains("Windows can report this as charging", Explain(Draining(null)));
+    }
+
+    [Fact]
+    public void ACoverageGapIsStatedInTheDiagnosis()
+    {
+        string diagnosis = Explain(new BatteryFlow(null, true, true, false, null,
+            CoverageNote: "Not every battery could be read."));
+
+        Assert.Contains("Not every battery could be read.", diagnosis);
+        Assert.DoesNotContain("net drain", diagnosis);
     }
 
     [Fact]
