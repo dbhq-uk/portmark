@@ -10,7 +10,12 @@ namespace Portmark.Core;
 /// </summary>
 public static class PortmarkReader
 {
-    public static PortmarkReport Read()
+    /// <param name="requestIdentity">
+    /// False to leave Discover Identity unasked even where the controller offers it. Asking makes
+    /// the controller send a PD request over the cable to the attached device and the cable plug,
+    /// which a read repeated on every power status change should not do. The CLI asks.
+    /// </param>
+    public static PortmarkReport Read(bool requestIdentity = true)
     {
         var report = new PortmarkReport { Machine = ReadMachine() };
 
@@ -32,7 +37,8 @@ public static class PortmarkReader
         int connectors = report.Capability.ConnectorCount ?? 0;
         for (byte index = 1; index <= connectors; index++)
             report.Connectors.Add(ReadConnector(connection, index, report.Capability.Features,
-                                                batteryPercent, batteryFlow, report.Capability.UcsiVersionBcd));
+                                                batteryPercent, batteryFlow, report.Capability.UcsiVersionBcd,
+                                                requestIdentity));
 
         return report;
     }
@@ -124,7 +130,7 @@ public static class PortmarkReader
     private static ConnectorReport ReadConnector(UcsiConnection connection, byte index,
                                                 PpmFeatureReport? features, int? batteryPercent = null,
                                                 Power.BatteryFlow? batteryFlow = null,
-                                                ushort? ucsiVersion = null)
+                                                ushort? ucsiVersion = null, bool requestIdentity = true)
     {
         bool cableDetailsAvailable = features?.CableDetailsAvailable ?? true;
         bool pdoDetailsAvailable = features?.PowerDataObjectDetailsAvailable ?? false;
@@ -190,7 +196,7 @@ public static class PortmarkReader
         // deduction alongside them would be noise at best and a contradiction at worst.
         report.Cable.Inferred = CableInference.FromConnector(report);
 
-        report.Identity = ReadIdentity(connection, index, report, features, ucsiVersion);
+        report.Identity = ReadIdentity(connection, index, report, features, ucsiVersion, requestIdentity);
 
         bool consuming = report.PowerDirection == "consuming";
         report.Power.IsUnderNegotiated = ChargeDiagnostic.IsUnderNegotiated(
@@ -208,12 +214,25 @@ public static class PortmarkReader
     /// where <see cref="PdMessage.WhyNotAsk"/> allows it. Where it does not, nothing is sent and the
     /// reason is the answer. The decoding lives in <see cref="DiscoverIdentity"/> so it can be tested
     /// without a controller; this method issues the reads and records every exchange first.
+    ///
+    /// Each request is sent once, with no retry: see <see cref="UcsiConnection.ExecuteWithoutRetry"/>.
     /// </summary>
-    private static IdentityReport ReadIdentity(UcsiConnection connection, byte index, ConnectorReport report,
-                                               PpmFeatureReport? features, ushort? ucsiVersion)
+    internal static IdentityReport ReadIdentity(UcsiConnection connection, byte index, ConnectorReport report,
+                                                PpmFeatureReport? features, ushort? ucsiVersion,
+                                                bool requestIdentity = true)
     {
-        string? whyNot = PdMessage.WhyNotAsk(ucsiVersion, features, report.Connected);
+        string? whyNot = PdMessage.WhyNotAsk(ucsiVersion, features, report.Connected, report.PowerOperationMode);
         if (whyNot is not null) return new IdentityReport { Requested = false, Reason = whyNot };
+
+        // The controller could have been asked, but this read was told not to ask. Said plainly, so
+        // the absence is not mistaken for a device or cable that declined.
+        if (!requestIdentity)
+            return new IdentityReport
+            {
+                Requested = false,
+                Reason = "This read did not send identity requests, so the attached device and cable were not "
+                       + "asked to identify themselves.",
+            };
 
         return new IdentityReport
         {
@@ -233,7 +252,7 @@ public static class PortmarkReader
         {
             ulong control = UcsiProtocol.GetPdMessage(index, recipient, offset, count,
                                                       UcsiProtocol.PdMessageDiscoverIdentity);
-            UcsiResult r = connection.Execute(UcsiProtocol.CmdGetPdMessage, control);
+            UcsiResult r = connection.ExecuteWithoutRetry(UcsiProtocol.CmdGetPdMessage, control);
             report.Raw.PdMessageExchanges.Add(new UcsiExchangeReport
             {
                 Command = $"GET_PD_MESSAGE recipient={name} type=DiscoverIdentity offset={offset} bytes={count}",

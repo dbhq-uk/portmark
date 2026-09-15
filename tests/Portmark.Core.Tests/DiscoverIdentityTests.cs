@@ -81,21 +81,24 @@ public class GetPdMessageEncodingTests
 /// Whether GET_PD_MESSAGE may be sent at all. It makes the controller send Discover Identity on
 /// the wire, so it is only sent where the controller has said it supports it: UCSI 1.2 or later,
 /// the GET_PD_MESSAGE bit (bmOptionalFeatures bit 8, UCSI 1.2 Table 4-54, Linux
-/// UCSI_CAP_GET_PD_MESSAGE) set, and something attached.
+/// UCSI_CAP_GET_PD_MESSAGE) set, something attached, and the connector operating under USB Power
+/// Delivery (GET_CONNECTOR_STATUS Power Operation Mode 3, Linux UCSI_CONSTAT_PWR_OPMODE_PD).
 /// </summary>
 public class PdMessageGateTests
 {
     /// <summary>Real GET_CAPABILITY response from the test machine: bmOptionalFeatures 0x000094.</summary>
     private static readonly byte[] Captured = Convert.FromHexString("46400000029400000300020100020001");
 
+    private static readonly string Pd = ConnectorStatus.PowerOperationModeName(3);
+
     private static PpmFeatureReport Offered(bool bit) => new() { GetPdMessageSupported = bit };
 
     [Fact]
     public void ThisMachineIsNotAsked()
     {
-        // UCSI 1.0, bit 8 clear, a charger attached. The reason must say it is this PC's
-        // controller, not the attached device, that rules the question out.
-        string? why = PdMessage.WhyNotAsk(0x0100, Capability.Decode(Captured), connected: true);
+        // UCSI 1.0, bit 8 clear, a charger attached under a PD contract. The reason must say it is
+        // this PC's controller, not the attached device, that rules the question out.
+        string? why = PdMessage.WhyNotAsk(0x0100, Capability.Decode(Captured), connected: true, Pd);
 
         Assert.NotNull(why);
         Assert.Contains("does not offer PD messages", why);
@@ -106,9 +109,10 @@ public class PdMessageGateTests
     [Fact]
     public void AControllerThatOffersItIsAsked()
     {
-        Assert.Null(PdMessage.WhyNotAsk(0x0120, Offered(true), connected: true));
-        Assert.Null(PdMessage.WhyNotAsk(0x0200, Offered(true), connected: true));
-        Assert.Null(PdMessage.WhyNotAsk(0x0210, Offered(true), connected: true));
+        Assert.Equal("USB Power Delivery", Pd);
+        Assert.Null(PdMessage.WhyNotAsk(0x0120, Offered(true), connected: true, Pd));
+        Assert.Null(PdMessage.WhyNotAsk(0x0200, Offered(true), connected: true, Pd));
+        Assert.Null(PdMessage.WhyNotAsk(0x0210, Offered(true), connected: true, Pd));
     }
 
     [Fact]
@@ -116,7 +120,7 @@ public class PdMessageGateTests
     {
         // Bit 8 is not defined before UCSI 1.2: Microsoft's UCSI 1.1 era structure stops at
         // bit 7. A set bit on an older controller is not an offer anyone defined.
-        string? why = PdMessage.WhyNotAsk(0x0110, Offered(true), connected: true);
+        string? why = PdMessage.WhyNotAsk(0x0110, Offered(true), connected: true, Pd);
 
         Assert.NotNull(why);
         Assert.Contains("1.2", why);
@@ -125,7 +129,7 @@ public class PdMessageGateTests
     [Fact]
     public void TheVersionAloneIsNotEnough()
     {
-        string? why = PdMessage.WhyNotAsk(0x0200, Offered(false), connected: true);
+        string? why = PdMessage.WhyNotAsk(0x0200, Offered(false), connected: true, Pd);
 
         Assert.NotNull(why);
         Assert.Contains("does not offer PD messages", why);
@@ -134,18 +138,38 @@ public class PdMessageGateTests
     [Fact]
     public void NothingAttachedIsNotAsked()
     {
-        string? why = PdMessage.WhyNotAsk(0x0200, Offered(true), connected: false);
+        string? why = PdMessage.WhyNotAsk(0x0200, Offered(true), connected: false, powerOperationMode: null);
 
         Assert.NotNull(why);
         Assert.Contains("Nothing is attached", why);
     }
 
+    [Theory]
+    [InlineData(1)]   // USB default
+    [InlineData(2)]   // BC 1.2
+    [InlineData(4)]   // Type-C 1.5A
+    [InlineData(5)]   // Type-C 3.0A
+    [InlineData(7)]   // not a mode UCSI defines
+    public void WithoutAPdContractNothingIsAsked(int mode)
+    {
+        // Discover Identity is a USB Power Delivery message. A port running on Type-C current or
+        // BC 1.2 has no PD contract, so the controller is not asked to send one.
+        string name = ConnectorStatus.PowerOperationModeName(mode);
+        string? why = PdMessage.WhyNotAsk(0x0200, Offered(true), connected: true, name);
+
+        Assert.NotNull(why);
+        Assert.Contains(name, why);
+        Assert.Contains("USB Power Delivery", why);
+        Assert.Contains("not asked", why);
+    }
+
     [Fact]
     public void UnknownsAreNotTreatedAsPermission()
     {
-        Assert.Contains("could not be read", PdMessage.WhyNotAsk(0x0200, Offered(true), connected: null));
-        Assert.Contains("could not be read", PdMessage.WhyNotAsk(0x0200, null, connected: true));
-        Assert.Contains("could not be read", PdMessage.WhyNotAsk(null, Offered(true), connected: true));
+        Assert.Contains("could not be read", PdMessage.WhyNotAsk(0x0200, Offered(true), connected: null, Pd));
+        Assert.Contains("could not be read", PdMessage.WhyNotAsk(0x0200, null, connected: true, Pd));
+        Assert.Contains("could not be read", PdMessage.WhyNotAsk(null, Offered(true), connected: true, Pd));
+        Assert.Contains("could not be read", PdMessage.WhyNotAsk(0x0200, Offered(true), connected: true, powerOperationMode: null));
     }
 
     [Fact]
@@ -559,8 +583,10 @@ public class DiscoverIdentityDecodeTests
     // 0x17EF.
     private const uint DrdHeader = 0xD54017EF;
 
-    // UFP VDO, Table 6.40: version 011b << 29 = 0x60000000, USB4 0x8000000, USB 3.2 0x4000000, USB
-    // 2.0 10b << 24 = 0x2000000, TBT3 alternate mode 0x8, speed 011b.
+    // UFP VDO, Table 6.40: version 011b << 29 = 0x60000000, then Device Capability 27-24, a bit field
+    // (Linux pd_vdo.h DEV_USB2_CAPABLE BIT(0), DEV_USB2_BILLBOARD BIT(1), DEV_USB3_CAPABLE BIT(2),
+    // DEV_USB4_CAPABLE BIT(3)): USB4 0x8000000, USB 3.2 0x4000000, USB 2.0 Billboard only 0x2000000;
+    // TBT3 alternate mode 0x8, speed 011b.
     private const uint UfpVdo = 0x6E00000B;
 
     // DFP VDO, Table 6.41: version 010b << 29 = 0x40000000, USB4, 3.2 and 2.0 host 0x7000000, port 1.
@@ -583,16 +609,21 @@ public class DiscoverIdentityDecodeTests
         Assert.Equal("PDUSB Host", id.ProductTypeDfp!.Meaning);
         Assert.Equal("USB Type-C receptacle", id.ConnectorType!.Meaning);
         Assert.Equal("0x17EF", id.VendorId);
+        Assert.Equal("Lenovo", id.VendorName);
 
         UfpVdoReport u = Assert.IsType<UfpVdoReport>(r.Ufp);
         Assert.Equal(3, u.VdoVersion.Code);
         Assert.True(u.Usb4DeviceCapable);
         Assert.True(u.Usb32DeviceCapable);
-        Assert.Equal(2, u.Usb20DeviceCapability!.Code);
+        // Bit 25 is USB 2.0 Billboard only; bit 24, plain USB 2.0 device capable, is clear. The
+        // first version read 27-24's low two bits as one code and called this "USB 2.0 capable".
+        Assert.True(u.Usb20DeviceCapableBillboardOnly);
+        Assert.False(u.Usb20DeviceCapable);
         Assert.True(u.Tbt3AlternateModeSupported);
         Assert.False(u.ReconfiguringAlternateModesSupported);
         Assert.False(u.NonReconfiguringAlternateModesSupported);
         Assert.Equal(3, u.HighestSpeed!.Code);
+        Assert.Equal("USB4 Gen3", u.HighestSpeed.Meaning);
 
         DfpVdoReport d = Assert.IsType<DfpVdoReport>(r.Dfp);
         Assert.Equal(2, d.VdoVersion.Code);
@@ -602,6 +633,98 @@ public class DiscoverIdentityDecodeTests
         Assert.Equal(1, d.PortNumber);
 
         Assert.StartsWith("The attached device declares", r.Declaration);
+    }
+
+    // ID Header, SOP: device 0x40000000, PDUSB Peripheral 010b << 27 = 0x10000000, VID 0x17EF. No
+    // DFP product type, so the only product type object is the UFP VDO.
+    private const uint PeripheralHeader = 0x500017EF;
+
+    [Theory]
+    // Device Capability, bits 27-24. Each bit stands alone, and every combination is defined.
+    [InlineData(0x60000000u, false, false, false, false)]
+    [InlineData(0x61000000u, true, false, false, false)]    // 0001b USB2.0 Device Capable
+    [InlineData(0x62000000u, false, true, false, false)]    // 0010b USB2.0 Device Capable (Billboard only)
+    [InlineData(0x63000000u, true, true, false, false)]     // both USB 2.0 bits: valid, not reserved
+    [InlineData(0x64000000u, false, false, true, false)]    // 0100b USB3.2 Device Capable
+    [InlineData(0x68000000u, false, false, false, true)]    // 1000b USB4 Device Capable
+    [InlineData(0x6F000000u, true, true, true, true)]
+    public void DeviceCapabilityIsFourIndependentBits(uint vdo, bool usb2, bool billboard, bool usb32, bool usb4)
+    {
+        UfpVdoReport u = DiscoverIdentity.Decode(Response(AckHeader, PeripheralHeader, 0, 0, vdo), cablePlug: false).Ufp!;
+
+        Assert.Equal(usb2, u.Usb20DeviceCapable);
+        Assert.Equal(billboard, u.Usb20DeviceCapableBillboardOnly);
+        Assert.Equal(usb32, u.Usb32DeviceCapable);
+        Assert.Equal(usb4, u.Usb4DeviceCapable);
+        Assert.Null(u.Note);
+    }
+
+    [Fact]
+    public void VconnVbusAndAlternateModeFieldsDecodeToTheirMeanings()
+    {
+        // UFP VDO: version 011b 0x60000000, VCONN Power 011b in 10-8 = 0x300 (3W), VCONN Required
+        // bit 7 = 0x80 (yes), VBUS Required bit 6 clear (0b is yes), Alternate Modes 5-3 = 010b,
+        // reconfigurable, 0x10 (Linux UFP_ALTMODE_RECFG BIT(1) shifted by 3), speed 001b (Gen1).
+        // 0x60000000 + 0x300 + 0x80 + 0x10 + 0x1.
+        UfpVdoReport u = DiscoverIdentity.Decode(
+            Response(AckHeader, PeripheralHeader, 0, 0, 0x60000391), cablePlug: false).Ufp!;
+
+        Assert.Equal("3W", u.VconnPower!.Meaning);
+        Assert.Equal("defined", u.VconnPower.Status);
+        Assert.True(u.VconnRequired);
+        Assert.True(u.VbusRequired);
+        Assert.True(u.ReconfiguringAlternateModesSupported);
+        Assert.False(u.NonReconfiguringAlternateModesSupported);
+        Assert.False(u.Tbt3AlternateModeSupported);
+        Assert.Equal("USB 3.2 Gen1", u.HighestSpeed!.Meaning);
+
+        // Bit 6 set (0x40): 1b is "No", VBUS is not required. Alternate Modes 100b (0x20 in place of
+        // 0x10): non-reconfigurable, Linux UFP_ALTMODE_NO_RECFG BIT(2).
+        UfpVdoReport noVbus = DiscoverIdentity.Decode(
+            Response(AckHeader, PeripheralHeader, 0, 0, 0x600003E1), cablePlug: false).Ufp!;
+
+        Assert.False(noVbus.VbusRequired);
+        Assert.True(noVbus.NonReconfiguringAlternateModesSupported);
+        Assert.False(noVbus.ReconfiguringAlternateModesSupported);
+    }
+
+    [Fact]
+    public void DfpHostCapabilityIsThreeIndependentBits()
+    {
+        // DFP VDO, Table 6.41: Host Capability 26-24 (Linux HOST_USB2_CAPABLE BIT(0),
+        // HOST_USB3_CAPABLE BIT(1), HOST_USB4_CAPABLE BIT(2)). USB 3.2 host only, 0x2000000, port 5.
+        DfpVdoReport d = DiscoverIdentity.Decode(
+            Response(AckHeader, 0x814017EF, 0, 0, 0x42000005), cablePlug: false).Dfp!;
+
+        Assert.False(d.Usb20HostCapable);
+        Assert.True(d.Usb32HostCapable);
+        Assert.False(d.Usb4HostCapable);
+        Assert.Equal(5, d.PortNumber);
+    }
+
+    [Fact]
+    public void TheDeclarationNamesWhoTheVendorIdIsRegisteredTo()
+    {
+        DiscoverIdentityReport r = DiscoverIdentity.Decode(
+            Response(AckHeader, ActiveCableHeader, 0, 0x00010002, ActiveCableVdo1, ActiveCableVdo2), cablePlug: true);
+
+        Assert.Equal("0x05AC", r.IdHeader!.VendorId);
+        Assert.Equal("Apple, Inc.", r.IdHeader.VendorName);
+        Assert.Contains("vendor ID 0x05AC (registered to Apple, Inc.)", r.Declaration);
+        Assert.Contains("not proof", r.Declaration);
+    }
+
+    [Fact]
+    public void AVendorIdTheListDoesNotNameGetsNoName()
+    {
+        // VID 0x0005 has no line in the embedded usb.ids table. No name is not "unknown vendor".
+        DiscoverIdentityReport r = DiscoverIdentity.Decode(
+            Response(AckHeader, 0x18600005, 0, 0x56780100, PassiveCableVdo), cablePlug: true);
+
+        Assert.Equal("0x0005", r.IdHeader!.VendorId);
+        Assert.Null(r.IdHeader.VendorName);
+        Assert.Contains("vendor ID 0x0005, product ID 0x5678", r.Declaration);
+        Assert.DoesNotContain("registered", r.Declaration);
     }
 
     [Fact]
@@ -729,5 +852,84 @@ public class DiscoverIdentityDecodeTests
         Assert.True(r.DataAvailable);
         Assert.False(r.Complete);
         Assert.Contains("offset 16", r.Reason);
+    }
+}
+
+/// <summary>
+/// GET_PD_MESSAGE at offset 0 makes the controller send Discover Identity over the cable, so a
+/// refused request is not retried: the retry that clears a settling PPM for register reads would
+/// otherwise put the same request on the wire up to twelve times per recipient.
+/// </summary>
+public class IdentityRequestRetryTests
+{
+    private static PpmFeatureReport Offered => new() { GetPdMessageSupported = true };
+
+    private static ConnectorReport Attached()
+        => new() { Index = 1, Connected = true, PowerOperationMode = ConnectorStatus.PowerOperationModeName(3) };
+
+    [Fact]
+    public void ARefusedIdentityRequestIsSentOncePerRecipient()
+    {
+        var sent = new List<ulong>();
+        var connection = new UcsiConnection(control =>
+        {
+            sent.Add(control);
+            return UcsiResult.Fail("the PPM reported an invalid device state (it is busy or still settling)");
+        }, sleep: _ => { });
+        ConnectorReport report = Attached();
+
+        IdentityReport identity = PortmarkReader.ReadIdentity(connection, 1, report, Offered, ucsiVersion: 0x0200);
+
+        Assert.True(identity.Requested);
+        Assert.Equal(2, sent.Count);
+        Assert.Equal((ulong)UcsiProtocol.PdMessageRecipientSop, (sent[0] >> 23) & 7);
+        Assert.Equal((ulong)UcsiProtocol.PdMessageRecipientSopPrime, (sent[1] >> 23) & 7);
+        Assert.Equal(2, report.Raw.PdMessageExchanges.Count);
+        Assert.Contains("not retried", report.Raw.PdMessageExchanges[0].Error);
+        Assert.False(identity.Partner!.DataAvailable);
+        Assert.False(identity.Cable!.DataAvailable);
+    }
+
+    [Fact]
+    public void OtherCommandsStillRetry()
+    {
+        int calls = 0;
+        var connection = new UcsiConnection(_ => { calls++; return UcsiResult.Fail("busy"); }, sleep: _ => { });
+
+        UcsiResult r = connection.Execute(UcsiProtocol.CmdGetCapability);
+
+        Assert.Equal(12, calls);
+        Assert.False(r.Ok);
+        Assert.Contains("12 attempts", r.Error);
+    }
+
+    [Fact]
+    public void IdentityCanBeLeftUnasked()
+    {
+        int calls = 0;
+        var connection = new UcsiConnection(_ => { calls++; return UcsiResult.Fail("unexpected"); }, sleep: _ => { });
+
+        IdentityReport identity = PortmarkReader.ReadIdentity(connection, 1, Attached(), Offered, ucsiVersion: 0x0200,
+                                                              requestIdentity: false);
+
+        Assert.Equal(0, calls);
+        Assert.False(identity.Requested);
+        Assert.Null(identity.Partner);
+        Assert.Null(identity.Cable);
+        Assert.Contains("not asked", identity.Reason);
+    }
+
+    [Fact]
+    public void TheControllersOwnReasonStandsWhenIdentityIsLeftUnasked()
+    {
+        // This machine could not be asked in any case, and that is the more useful thing to say.
+        var connection = new UcsiConnection(_ => UcsiResult.Fail("unexpected"), sleep: _ => { });
+        PpmFeatureReport thisMachine = Capability.Decode(Convert.FromHexString("46400000029400000300020100020001"))!;
+
+        IdentityReport identity = PortmarkReader.ReadIdentity(connection, 1, Attached(), thisMachine, ucsiVersion: 0x0100,
+                                                              requestIdentity: false);
+
+        Assert.False(identity.Requested);
+        Assert.Contains("does not offer PD messages", identity.Reason);
     }
 }

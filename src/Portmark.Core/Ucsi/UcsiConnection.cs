@@ -99,8 +99,27 @@ public sealed class UcsiConnection
     }
 
     private readonly string _interfacePath;
+    private readonly Func<ulong, UcsiResult> _executeOnce;
+    private readonly Action<TimeSpan> _sleep;
 
-    private UcsiConnection(string interfacePath) => _interfacePath = interfacePath;
+    private UcsiConnection(string interfacePath)
+    {
+        _interfacePath = interfacePath;
+        _executeOnce = ExecuteOnce;
+        _sleep = Thread.Sleep;
+    }
+
+    /// <summary>
+    /// A connection whose command transport is a stand-in, so tests can check how commands are
+    /// issued and retried. <paramref name="executeOnce"/> plays one command; nothing reaches a
+    /// controller through <see cref="Execute(byte, ulong)"/> or <see cref="ExecuteWithoutRetry"/>.
+    /// </summary>
+    internal UcsiConnection(Func<ulong, UcsiResult> executeOnce, Action<TimeSpan> sleep)
+    {
+        _interfacePath = "";
+        _executeOnce = executeOnce;
+        _sleep = sleep;
+    }
 
     /// <summary>The device interface path, useful in diagnostics.</summary>
     public string InterfacePath => _interfacePath;
@@ -143,15 +162,30 @@ public sealed class UcsiConnection
 
         for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            last = ExecuteOnce(control);
+            last = _executeOnce(control);
             if (last.Ok) return last;
-            Thread.Sleep(RetryDelay);
+            _sleep(RetryDelay);
         }
 
         return last with
         {
             Error = $"{UcsiProtocol.CommandName(command)} was refused after {MaxAttempts} attempts: {last.Error}",
         };
+    }
+
+    /// <summary>
+    /// Issues one command exactly once. For GET_PD_MESSAGE, whose first page makes the controller
+    /// send a Discover Identity request over the cable: the retry in <see cref="Execute(byte, ulong)"/>
+    /// assumes a refused call is a register read that can be repeated for free, and whether a
+    /// refused GET_PD_MESSAGE reached the controller is not known. Retrying could put the same
+    /// request on the wire up to <see cref="MaxAttempts"/> times, so a refusal is returned as it is.
+    /// </summary>
+    public UcsiResult ExecuteWithoutRetry(byte command, ulong control)
+    {
+        UcsiResult result = _executeOnce(control);
+        return result.Ok
+            ? result
+            : result with { Error = $"{UcsiProtocol.CommandName(command)} was refused and not retried: {result.Error}" };
     }
 
     public UcsiResult Execute(byte command) => Execute(command, UcsiProtocol.Control(command));
