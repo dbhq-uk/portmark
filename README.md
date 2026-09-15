@@ -8,12 +8,14 @@
 [![Built with .NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](#building)
 [![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen.svg)](#building)
 
-**Find out what your USB-C ports, chargers and adapters can actually do - and get told
-"unknown" when your PC genuinely cannot tell you.**
+**A USB-C cable, charger and port checker for Windows. Find out what your cable, charger and
+adapter can actually do, why your laptop charges slowly, and get told "unknown" when your PC
+genuinely cannot tell you.**
 
-*A native Windows CLI for USB-C: USB Power Delivery contracts, DisplayPort Alternate Mode,
-e-marker cable data, and connected device details. No Electron, no telemetry, single executable.
-Plus a tray app that watches your ports and tells you at the moment you plug something in.*
+*A native Windows CLI for USB-C: USB Power Delivery contracts, charging diagnosis, DisplayPort
+Alternate Mode, e-marker cable data, and connected device details. No Electron, no telemetry,
+single executable. Plus a tray app that watches your ports and tells you at the moment you plug
+something in.*
 
 <p align="center"><img src="assets/screenshots/tray.png" width="420" alt="The portmark tray panel: this PC's controller declaring that cable details are unavailable, empty USB-C ports, and the four attached USB devices with the link speed each negotiated"></p>
 
@@ -24,24 +26,28 @@ and then shows you almost none of it. portmark reads it back out.
 ```
 $ portmark --human
 
-Adapter 0x343C:0x0000
-  DisplayPort Alternate Mode: entered successfully
-  Video        yes, DisplayPort is active through this adapter
-
 Port 1
-  Downstream facing port, over USB Power Delivery, drawing power,
-  supply offers up to 65W, drawing 5V at 3A (15W).
-  Port supports USB 2.0, USB 3.x, alternate modes, dual role power
   Alt modes    Lenovo vendor mode, Intel Thunderbolt 3, DisplayPort Alternate Mode
   Negotiated   5V at 3A (15W)
+  Charging     nominal charging rate, according to the controller
   Supply offers
     - 5V at 3A (15W)
     - 9V at 3A (27W)
     - 15V at 3A (45W)
-    - 20V at 3.25A (65W)
+    - 20V at 5A (100W)
+
+  ** CONTRACT FAR BELOW WHAT THIS SUPPLY OFFERS **
+  A 15W contract is in force, but this supply offers up to 100W. The
+  controller nonetheless reports a nominal charging rate, so its firmware
+  is not treating this as a shortfall. The battery is at 30 percent, so a
+  full battery does not explain this, though a charge limit could.
+  Cable rating at least 5A, deduced not reported
 ```
 
-## It tells you when you are losing speed
+A 100W charger, a laptop taking 15W of it, and a battery falling while Windows says "charging".
+That reading is from the machine portmark was developed on, cut to the relevant lines.
+
+## Why is my USB-C device running slowly?
 
 The question behind most USB-C frustration is not "what is this cable" but "why is this slow".
 portmark compares what each device declares it can do against the link it actually negotiated:
@@ -61,7 +67,7 @@ Both halves of that comparison come from the hardware - `bcdUSB` from the device
 and the negotiated speed from the hub - so it is a measurement, not a guess. Windows knows this and
 never tells you.
 
-## And when you are losing power
+## Why is my laptop charging slowly over USB-C?
 
 The same comparison works for charging. portmark reads what the supply offers and the contract
 actually in force, and tells you when most of the offer is going unused:
@@ -204,6 +210,22 @@ cable is fine; the controller will not describe it. `portmark --human` says whic
 If a supply offering more than 3A is attached, portmark will still tell you the cable carries at
 least that much, deduced from the power contract rather than read from the cable.
 
+**Is my USB-C cable really 100W?**
+A cable rated above 3A has to carry an e-marker chip that says so. If your PC's controller can read
+it, portmark shows the cable's own rating. If it cannot, and a supply offering more than 3A is
+attached, portmark tells you the cable carries at least that much, labelled as a deduction. A
+cable that is fine at 100W can still be a USB 2.0 cable: power and data speed are separate.
+
+**Will this USB-C cable or adapter carry video?**
+portmark shows which alternate modes each port supports, which the attached device offers, and,
+from an adapter's Billboard descriptor, whether DisplayPort was actually entered. UCSI has no
+video field for cables, so portmark will not claim a cable carries video when nothing says so.
+
+**Is there a WhatCable for Windows?**
+WhatCable is a macOS app that answers the same question on a Mac. portmark is a separate,
+independent Windows tool written against the USB specifications. It is not a port of WhatCable and
+is not affiliated with it.
+
 **Is it safe? It wants administrator rights.**
 Only for the optional extended tier, only once, and only to set a single registry value. portmark
 never sends a command that changes port state. Read [the cost of the extended tier](#the-extended-tier-and-its-cost)
@@ -227,12 +249,6 @@ Not Supported indicator, exactly as it answers an undefined command.
 That is one machine. **If you run portmark, please open an issue with the output of
 `portmark --human`** - particularly whether your controller reports cable details. That capability
 is not documented anywhere and the only way to find out how common it is, is to collect it.
-
-## Repository topics
-
-When published, tag the repository with: `usb-c`, `usb-power-delivery`, `windows`, `csharp`,
-`dotnet`, `ucsi`, `thunderbolt`, `displayport`, `hardware-info`, `system-tray`, `utility`,
-`usb`, `cli`, `winui`, `e-marker`.
 
 ## Contributing
 
