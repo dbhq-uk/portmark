@@ -5,12 +5,22 @@ namespace Portmark.Core.Ucsi;
 /// <summary>
 /// Decodes a UCSI GET_CABLE_PROPERTY response.
 ///
-/// Layout per the UCSI specification, 5 bytes:
-///   bytes 0-1  bmSpeedSupported    bits 0-13 mantissa, bits 14-15 unit exponent
+/// Layout per UCSI 1.2 Table 4-39 and UCSI 2.0 Table 4-40, cross-checked against Linux's struct
+/// ucsi_cable_property, 5 bytes:
+///   bytes 0-1  bmSpeedSupported    bits 1:0 Speed Exponent, bits 15:2 Speed Mantissa
 ///   byte  2    bCurrentCapability  in 50 mA units
-///   byte  3    bit 0 bmVBUSInCable, bit 1 bIsActiveCable, bit 2 bDirectionality,
-///              bits 3-4 bPlugEndType, bit 5 bmModeSupport
-///   byte  4    bits 0-3 bLatency
+///   byte  3    bit 0 VBUSInCable, bit 1 CableType (1 active), bit 2 Directionality,
+///              bits 3-4 Plug End Type, bit 5 Mode Support, bits 6-7 reserved
+///   byte  4    bits 0-3 Latency (bit 32 of the structure), bits 4-7 reserved
+///
+/// The speed fields were the wrong way round once, exponent in bits 15:14 and mantissa in 13:0,
+/// which decoded a 10 Gbps cable, 0x002B, as "43 bps". Both tables and Microsoft's
+/// UCSI_GET_CABLE_PROPERTY_IN (SpeedExponent : 2, then Mantissa : 14) put the exponent at the bottom.
+///
+/// Latency is left at byte 4, as the tables have it: two reserved bits at 30-31, then Latency at 32
+/// for four bits, and Linux reads it as its own byte. Microsoft's structure packs Latency directly
+/// after ModeSupport, at bit 30, with no reserved bits; the tables win. Its codes are USB PD's cable
+/// latency codes and are passed through raw.
 /// </summary>
 public static class CableProperty
 {
@@ -44,17 +54,28 @@ public static class CableProperty
         byte currentRaw = data[2];
         byte flags = data[3];
         int plugType = (flags >> 3) & 0x03;
+        bool active = (flags & 0x02) != 0;
 
         return new CableReport
         {
             DataAvailable = true,
             Speed = DecodeSpeed(speedRaw),
             CurrentCapabilityMilliamps = currentRaw == 0 ? null : currentRaw * 50,
+            // The current at 20V, not a power rating the cable stated. Anything that shows it
+            // says "at 20V".
             MaxWattsAt20Volts = currentRaw == 0 ? null : currentRaw * 50 * 20 / 1000,
             PlugType = PlugTypeName(plugType),
-            ActiveCable = (flags & 0x02) != 0,
+            ActiveCable = active,
             VbusInCable = (flags & 0x01) != 0,
-            SupportsAlternateModes = (flags & 0x20) != 0,
+            LaneDirectionalityConfigurable = (flags & 0x04) != 0,
+            // Mode Support "shall only be valid if the CableType field is set to one". Reading the
+            // bit of a passive cable as "no alternate modes" would be answering a question UCSI
+            // does not let a passive cable be asked.
+            SupportsAlternateModes = active ? (flags & 0x20) != 0 : null,
+            AlternateModeSupportNote = active
+                ? null
+                : "UCSI defines the cable's alternate mode flag only for active cables, so for this passive "
+                + "cable it says nothing either way.",
             LatencyCode = data[4] & 0x0F,
             SupportsVideo = null,
             VideoNote = "Not determinable from the cable. UCSI does not report a cable's video "
@@ -63,15 +84,16 @@ public static class CableProperty
     }
 
     /// <summary>
-    /// bmSpeedSupported is a mantissa plus a unit exponent. A zero mantissa means the cable did
-    /// not state a speed, which is not the same as the cable being slow.
+    /// bmSpeedSupported is a mantissa (bits 15:2) times a unit the exponent (bits 1:0) selects. A
+    /// zero mantissa means the cable did not state a speed, which is not the same as the cable
+    /// being slow.
     /// </summary>
     public static SpeedReport? DecodeSpeed(ushort raw)
     {
-        int mantissa = raw & 0x3FFF;
+        int mantissa = raw >> 2;
         if (mantissa == 0) return null;
 
-        int exponent = (raw >> 14) & 0x03;
+        int exponent = raw & 0x03;
         (string unit, long multiplier) = exponent switch
         {
             0 => ("bps", 1L),
@@ -95,7 +117,9 @@ public static class CableProperty
         0 => "USB Type-A",
         1 => "USB Type-B",
         2 => "USB Type-C",
-        3 => "Other or captive",
+        // UCSI: "3 Other (Not USB)". This was once "Other or captive", but nothing in this
+        // response says a cable is captive; that is a field of the PD cable VDO.
+        3 => "Other (not USB)",
         _ => "Unknown",
     };
 }
@@ -125,6 +149,12 @@ public static class Capability
     public const int BitExternalSupplyNotification = 6;
     public const int BitPdResetNotification = 7;
 
+    /// <summary>
+    /// GET_PD_MESSAGE supported: UCSI 1.2 Table 4-54 and UCSI 2.0 Table 4-65, Linux
+    /// UCSI_CAP_GET_PD_MESSAGE BIT(8). Not in Microsoft's UCSI 1.1 era structure, which stops at bit 7.
+    /// </summary>
+    public const int BitGetPdMessage = 8;
+
     public static PpmFeatureReport? Decode(ReadOnlySpan<byte> data)
     {
         if (data.Length < 9) return null;
@@ -139,6 +169,7 @@ public static class Capability
             AlternateModeDetailsAvailable = (optional & (1u << BitAlternateModeDetails)) != 0,
             PowerDataObjectDetailsAvailable = (optional & (1u << BitPdoDetails)) != 0,
             CableDetailsAvailable = (optional & (1u << BitCableDetails)) != 0,
+            GetPdMessageSupported = (optional & (1u << BitGetPdMessage)) != 0,
             AlternateModeCount = data[8],
             BatteryChargingVersion = data.Length >= 12 ? Bcd(data[10], data[11]) : null,
             PowerDeliveryVersion = data.Length >= 14 ? Bcd(data[12], data[13]) : null,
