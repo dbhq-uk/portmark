@@ -295,6 +295,99 @@ public class LinkDiagnosticTests
         Assert.False(a.IsUnderperforming);
         Assert.Equal("High, 480 Mbps", a.OperatingSpeed);
     }
+
+    [Fact]
+    public void TheOperatingFlagOverridesALegacyHighSpeedCode()
+    {
+        // A hub can leave the legacy Speed at High (2) while its EX_V2 flags say the device is
+        // operating at SuperSpeed and capable of it (0x03). Reading the legacy code alone showed
+        // 480 Mbps and flagged a device running at exactly what it can do.
+        LinkAssessment a = LinkDiagnostic.Assess(
+            LinkDiagnostic.SpeedHigh, PerInterface, false, Hub(protocols: 0x07, flags: 0x03), null);
+
+        Assert.False(a.IsUnderperforming);
+        Assert.Equal("SuperSpeed, 5 Gbps or above", a.OperatingSpeed);
+        Assert.Equal(LinkDiagnostic.SpeedSuper, LinkDiagnostic.OperatingRank(LinkDiagnostic.SpeedHigh, Hub(0x07, 0x03)));
+    }
+
+    [Fact]
+    public void ALegacyHighSpeedCodeOperatingAtSuperSpeedIsComparedAsSuperSpeed()
+    {
+        // Operating at SuperSpeed by the flag, capable of SuperSpeedPlus, legacy code still High.
+        LinkAssessment a = LinkDiagnostic.Assess(
+            LinkDiagnostic.SpeedHigh, PerInterface, false, Hub(protocols: 0x04, flags: 0x0B), null);
+
+        Assert.True(a.IsUnderperforming);
+        Assert.Equal("10 Gbps or above", a.CapableSpeed);
+        Assert.Contains("at SuperSpeed but not SuperSpeedPlus", a.Explanation);
+        Assert.DoesNotContain("480 Mbps", a.Explanation);
+    }
+
+    [Fact]
+    public void WithoutOperatingFlagsTheLegacyCodeStands()
+    {
+        Assert.Equal(LinkDiagnostic.SpeedHigh, LinkDiagnostic.OperatingRank(LinkDiagnostic.SpeedHigh, null));
+        Assert.Equal(LinkDiagnostic.SpeedHigh, LinkDiagnostic.OperatingRank(LinkDiagnostic.SpeedHigh, Hub(0x07, 0x02)));
+    }
+}
+
+/// <summary>
+/// The watcher polls every second or two, and the link evidence (the hub's EX_V2 report, the
+/// connector's companion port and the device's BOS descriptor) does not change while a device stays
+/// connected. The cache keeps it per connection and forgets a connection as soon as a scan no
+/// longer sees it, so a device that returns is read fresh.
+/// </summary>
+public class UsbLinkCacheTests
+{
+    private static UsbConnection Connection(uint port = 1, ushort vid = 0x05AC, ushort pid = 0x12A8, ushort address = 7)
+        => new(port, vid, pid, 0, 0, 0, LinkDiagnostic.SpeedSuper, 1, false, address, 0x0320, 0, 0, 0);
+
+    private static UsbLinkReading Reading() => new(new ConnectionSpeedInfo(0x04, 0x03), null);
+
+    [Fact]
+    public void AConnectedDeviceIsReadOnceAcrossScans()
+    {
+        var cache = new UsbLinkCache();
+        string key = UsbLinkCache.KeyOf("hubA", Connection());
+        int reads = 0;
+
+        for (int scan = 0; scan < 3; scan++)
+        {
+            cache.GetOrRead(key, () => { reads++; return Reading(); });
+            cache.EndScan();
+        }
+
+        Assert.Equal(1, reads);
+    }
+
+    [Fact]
+    public void ADeviceMissingFromAScanIsReadAgainWhenItReturns()
+    {
+        var cache = new UsbLinkCache();
+        string key = UsbLinkCache.KeyOf("hubA", Connection());
+        int reads = 0;
+
+        cache.GetOrRead(key, () => { reads++; return Reading(); });
+        cache.EndScan();
+        cache.EndScan();   // a scan in which the device was not seen
+        cache.GetOrRead(key, () => { reads++; return Reading(); });
+
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public void AReEnumeratedDeviceIsADifferentConnection()
+    {
+        // Same socket, same IDs, new address: Windows enumerated it again, so the link may differ.
+        Assert.NotEqual(UsbLinkCache.KeyOf("hubA", Connection(address: 7)),
+                        UsbLinkCache.KeyOf("hubA", Connection(address: 8)));
+        Assert.NotEqual(UsbLinkCache.KeyOf("hubA", Connection(port: 1)),
+                        UsbLinkCache.KeyOf("hubA", Connection(port: 2)));
+        Assert.NotEqual(UsbLinkCache.KeyOf("hubA", Connection()),
+                        UsbLinkCache.KeyOf("hubB", Connection()));
+        Assert.NotEqual(UsbLinkCache.KeyOf("hubA", Connection(pid: 1)),
+                        UsbLinkCache.KeyOf("hubA", Connection(pid: 2)));
+    }
 }
 
 /// <summary>
@@ -341,6 +434,20 @@ public class UsbConnectionStatusTests
 
         Assert.Equal("DeviceNotEnoughPower", r.ConnectionStatus);
         Assert.Equal("0x1234", r.VendorId);
+    }
+
+    [Fact]
+    public void AFaultedPortCarriesTheRegisteredNameOnlyWhenItHasAVendorId()
+    {
+        UsbPortStatusReport named = UsbConnectionStatus.Decode(Info(1, 5, vid: 0x05AC), "hub", 1);
+        UsbPortStatusReport bare = UsbConnectionStatus.Decode(Info(1, 2), "hub", 1);
+
+        Assert.Equal("Apple, Inc.", named.VendorName);
+        Assert.Null(bare.VendorName);
+
+        var options = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase };
+        using System.Text.Json.JsonDocument json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(named, options));
+        Assert.Equal("Apple, Inc.", json.RootElement.GetProperty("vendorName").GetString());
     }
 
     [Theory]

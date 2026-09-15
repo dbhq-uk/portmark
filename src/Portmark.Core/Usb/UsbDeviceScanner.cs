@@ -16,7 +16,11 @@ public static class UsbDeviceScanner
     /// connected. A port whose device failed enumeration has no device to describe, and dropping
     /// it with the empty ports hid the one port the user most needed to hear about.
     /// </summary>
-    public static UsbScanReport Scan()
+    /// <param name="linkCache">
+    /// Keeps each connection's link evidence between scans. The watcher passes one; one-shot
+    /// commands pass none and read everything fresh.
+    /// </param>
+    public static UsbScanReport Scan(UsbLinkCache? linkCache = null)
     {
         var scan = new UsbScanReport();
 
@@ -36,7 +40,7 @@ public static class UsbDeviceScanner
                     UsbConnection? c = UsbHubIo.ParseConnection(port, info);
                     if (c is not null)
                     {
-                        scan.Devices.Add(Describe(hub, hubPath, c));
+                        scan.Devices.Add(Describe(hub, hubPath, c, linkCache));
                         continue;
                     }
 
@@ -47,13 +51,17 @@ public static class UsbDeviceScanner
             }
         }
 
+        linkCache?.EndScan();
         return scan;
     }
 
-    private static UsbDeviceReport Describe(SafeFileHandle hub, string hubPath, UsbConnection c)
+    private static UsbDeviceReport Describe(SafeFileHandle hub, string hubPath, UsbConnection c, UsbLinkCache? linkCache)
     {
-        ConnectionSpeedInfo? link = WithCompanion(hub, hubPath, c.Port, UsbHubIo.GetConnectionSpeedInfo(hub, c.Port));
-        BosSpeedCapability? bos = UsbHubIo.GetBosSpeedCapability(hub, c.Port, c.UsbVersion);
+        UsbLinkReading reading = linkCache is null
+            ? ReadLink(hub, hubPath, c)
+            : linkCache.GetOrRead(UsbLinkCache.KeyOf(hubPath, c), () => ReadLink(hub, hubPath, c));
+        ConnectionSpeedInfo? link = reading.Link;
+        BosSpeedCapability? bos = reading.Bos;
         LinkAssessment assessment = LinkDiagnostic.Assess(c.Speed, c.DeviceClass, c.IsHub, link, bos);
 
         return new UsbDeviceReport
@@ -68,7 +76,9 @@ public static class UsbDeviceScanner
             Speed = assessment.OperatingSpeed,
             SpeedCode = c.Speed,
             UsbVersion = $"{(c.UsbVersion >> 8) & 0xFF:X}.{(c.UsbVersion >> 4) & 0x0F:X}",
-            MaxPowerMilliamps = UsbHubIo.GetMaxPowerMilliamps(hub, c.Port, c.Speed),
+            // bMaxPower's unit follows the speed the device is operating at, so the hub's operating
+            // flags decide it, not a legacy speed code that can lag behind them.
+            MaxPowerMilliamps = UsbHubIo.GetMaxPowerMilliamps(hub, c.Port, (byte)LinkDiagnostic.OperatingRank(c.Speed, link)),
             IsHub = c.IsHub,
             Address = c.Address,
             Port = (int)c.Port,
@@ -79,6 +89,11 @@ public static class UsbDeviceScanner
             LinkEvidence = Evidence(link, bos, c.UsbVersion),
         };
     }
+
+    /// <summary>The hub's EX_V2 report with its companion port, and the device's BOS, read now.</summary>
+    private static UsbLinkReading ReadLink(SafeFileHandle hub, string hubPath, UsbConnection c)
+        => new(WithCompanion(hub, hubPath, c.Port, UsbHubIo.GetConnectionSpeedInfo(hub, c.Port)),
+               UsbHubIo.GetBosSpeedCapability(hub, c.Port, c.UsbVersion));
 
     /// <summary>
     /// Adds the port that shares this port's connector, and that port's protocols. On an xHCI root

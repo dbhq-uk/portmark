@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using Portmark.Core;
 using Portmark.Core.Model;
+using Portmark.Core.Ucsi;
 using Portmark.Core.Usb;
 
 namespace Portmark.Tray;
@@ -185,33 +186,42 @@ public partial class PopoverWindow : Window
         foreach (ConnectorReport c in _report.Connectors)
         {
             PowerReport p = c.Power;
+            bool supplying = c.PowerDirection == "supplying";
 
-            // A port that is giving power out has no supplier PDOs to list, but "powering the
-            // dock" is exactly as much an answer as "charging at 15W". Skipping it made port 2
+            // The source's list is the one that counts, as in PortmarkReader.Summarise. While this PC
+            // supplies, the contract was negotiated against this PC's offer, and the attached
+            // device's own offer (MaxAvailableMilliwatts) has nothing to do with it. The first
+            // version divided this PC's contract by the device's ceiling, and lit the device's chips
+            // by the voltage of an object this PC offered.
+            List<PowerObjectReport> offers = supplying ? p.LocalSource : p.PartnerSource;
+            int? ceiling = supplying ? PowerDataObject.OfferCeilingMilliwatts(p.LocalSource) : p.MaxAvailableMilliwatts;
+
+            // A port that is giving power out may have no offer of its own to list, but "powering
+            // the dock" is exactly as much an answer as "charging at 15W". Skipping it made port 2
             // vanish from the panel entirely.
-            if ((!p.DataAvailable || p.MaxAvailableMilliwatts is not > 0)
-                && c.Connected == true && c.PowerDirection == "supplying")
+            if ((!p.DataAvailable || ceiling is not > 0) && c.Connected == true && supplying)
             {
                 var give = new StackPanel();
                 give.Children.Add(Styled(new TextBlock { Text = "Powering a device" }, "Value"));
                 give.Children.Add(Styled(new TextBlock { Text = PortCaption(c) }, "Caption"));
                 Items.Children.Add(Card(Row("IconBolt", give, "TextMuted"),
-            "This port is delivering power to whatever is plugged into it."));
+            "This port is supplying power to whatever is plugged into it."));
                 continue;
             }
 
-            if (!p.DataAvailable || p.MaxAvailableMilliwatts is not int mw || mw <= 0) continue;
+            if (!p.DataAvailable || ceiling is not int mw || mw <= 0) continue;
 
             var stack = new StackPanel();
 
             // "Charging - 15W of 65W" is what a person asks; connector indices and PDO lists are
-            // what a controller answers. Translate, and keep the raw form behind the toggle.
-            string role = c.PowerDirection == "supplying" ? "Powering a device"
+            // what a controller answers. Translate, and keep the raw form behind the toggle. The
+            // negotiated figure is the contract, not a measurement of what is flowing.
+            string role = supplying ? "Powering a device"
                         : c.PowerDirection == "consuming" ? "Charging this PC"
                         : "Connected";
             string headline = p.Negotiated?.NegotiatedPowerMilliwatts is int now
-                ? $"{role} · {now / 1000.0:0.#}W of {mw / 1000.0:0.#}W"
-                : $"{role} · up to {mw / 1000.0:0.#}W";
+                ? $"{role} · {now / 1000.0:0.#}W contract of {mw / 1000.0:0.#}W offered"
+                : $"{role} · up to {mw / 1000.0:0.#}W offered";
 
             stack.Children.Add(Styled(new TextBlock { Text = headline }, "Value"));
             stack.Children.Add(Styled(new TextBlock
@@ -222,20 +232,25 @@ public partial class PopoverWindow : Window
             // The ladder is the substance: every level the supply offers, with the one in force
             // lit. This is what the CLI shows and what the first cut of this panel hid behind a
             // toggle, which made the panel a summary of a tool instead of the tool.
+            // The Request names an object by its position in the source's list, so the chip is lit
+            // by that position. Matching by voltage could light an object the request never named.
             var ladder = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
-            int? activeMv = p.Negotiated?.SelectedVoltageMillivolts;
-            foreach (PowerObjectReport pdo in p.PartnerSource.Where(x => x.Kind != "unrecognised"))
+            int? activePosition = p.Negotiated?.ObjectPosition;
+            foreach (PowerObjectReport pdo in offers.Where(x => x.Kind != "unrecognised"))
             {
                 string label = pdo.VoltageMillivolts is int mv && pdo.MaxCurrentMilliamps is int ma
                     ? $"{mv / 1000.0:0.#}V · {ma / 1000.0:0.##}A"
                     : pdo.Display;
-                ladder.Children.Add(Chip(label, pdo.VoltageMillivolts == activeMv && activeMv is not null));
+                ladder.Children.Add(Chip(label, pdo.Position is int pos && pos == activePosition));
             }
             if (ladder.Children.Count > 0) stack.Children.Add(ladder);
 
-            Items.Children.Add(Card(Row("IconBolt", stack, "Accent"),
-            "The chips are every power level this supply offers. The highlighted one is the "
-          + "contract in force right now, negotiated between the supply and this PC."));
+            Items.Children.Add(Card(Row("IconBolt", stack, "Accent"), supplying
+                ? "The chips are every power level this PC's port controller reports it offers on this "
+                + "port. The highlighted one is the contract in force right now, negotiated between "
+                + "this PC and the attached device."
+                : "The chips are every power level this supply offers. The highlighted one is the "
+                + "contract in force right now, negotiated between the supply and this PC."));
         }
     }
 
@@ -254,7 +269,7 @@ public partial class PopoverWindow : Window
             foreach (AlternateModeReport m in b.Modes)
                 stack.Children.Add(Styled(new TextBlock
                 {
-                    Text = $"{m.Name} · {m.State}",
+                    Text = $"{ModeLabel(m.Name, m.Svid, m.VendorName)} · {m.State}",
                 }, "Caption"));
             if (b.TruncationNote is not null)
                 stack.Children.Add(Styled(new TextBlock { Text = b.TruncationNote, TextWrapping = TextWrapping.Wrap }, "Caption"));
@@ -323,6 +338,22 @@ public partial class PopoverWindow : Window
     // PortCaption is called from an instance context but reads the toggle through a static so it
     // can stay a pure function of its argument.
     private static bool _staticDetail;
+
+    /// <summary>
+    /// A vendor ID with the name registered to it in brackets, or the bare ID when the vendor list
+    /// names none. The same form as the CLI: the registered name, not the maker.
+    /// </summary>
+    internal static string VendorLabel(string vendorId, string? vendorName)
+        => vendorName is null ? vendorId : $"{vendorId} ({vendorName})";
+
+    /// <summary>
+    /// A mode's name, with the registered vendor name added only where the name is the bare SVID,
+    /// as the CLI does. A mode with a name of its own, such as DisplayPort, is left as it is.
+    /// </summary>
+    internal static string ModeLabel(string name, string svid, string? vendorName)
+        => vendorName is not null && name.Contains(svid, StringComparison.OrdinalIgnoreCase)
+            ? $"{name} ({vendorName})"
+            : name;
 
     /// <summary>"High, 480 Mbps" is two facts; the row only has room for the one that matters.</summary>
     private static string ShortSpeed(string speed)

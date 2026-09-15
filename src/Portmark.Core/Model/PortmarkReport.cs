@@ -980,6 +980,12 @@ public sealed class UsbPortStatusReport
     public string? VendorId { get; init; }
     public string? ProductId { get; init; }
 
+    /// <summary>
+    /// The name registered to <see cref="VendorId"/> in the USB ID Repository, null when there is no
+    /// vendor ID or the list names none. Who holds the number, not proof of who made the device.
+    /// </summary>
+    public string? VendorName => VendorNames.Find(VendorId);
+
     /// <summary>The fixed part of USB_NODE_CONNECTION_INFORMATION_EX, so the decoding can be checked.</summary>
     public string ConnectionInformationHex { get; init; } = "";
 }
