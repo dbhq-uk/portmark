@@ -20,6 +20,6 @@
   <ItemGroup>
     <!-- Local WMI only, for the OS caption in 'portmark report'. The registry's ProductName still
          says "Windows 10" on Windows 11, which is the wrong thing to put in a hardware report. -->
-    <PackageReference Include="System.Management" Version="10.0.12" />
+    <PackageReference Include="System.Management" Version="10.0.13" />
   </ItemGroup>
 </Project>
